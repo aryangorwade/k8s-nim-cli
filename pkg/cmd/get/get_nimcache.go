@@ -116,5 +116,8 @@ func getModel(nimCache *appsv1alpha1.NIMCache) string {
 }
 
 func getPVCDetails(nimCache *appsv1alpha1.NIMCache) string {
-	return fmt.Sprintf("%s, %s", nimCache.Spec.Storage.PVC.Name, nimCache.Spec.Storage.PVC.Size)
+	if nimCache.Spec.Storage.PVC.Name != "" {
+		return fmt.Sprintf("%s, %s", nimCache.Spec.Storage.PVC.Name, nimCache.Spec.Storage.PVC.Size)
+	} 
+	return fmt.Sprint(nimCache.Spec.Storage.PVC.Size)
 }

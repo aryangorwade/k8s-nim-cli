@@ -25,7 +25,7 @@ func NewGetCommand(cmdFactory cmdutil.Factory, streams genericclioptions.IOStrea
 	}
 
 	cmd.AddCommand(NewGetNIMCacheCommand(cmdFactory, streams))
-	//cmd.AddCommand(NewGetNIMCacheCommand(cmdFactory, streams))
+	cmd.AddCommand(NewGetNIMServiceCommand(cmdFactory, streams))
 	//cmd.AddCommand(NewGetNodesCommand(cmdFactory, streams))
 	return cmd
 }
