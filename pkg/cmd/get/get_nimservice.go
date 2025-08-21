@@ -39,7 +39,7 @@ func NewGetNIMServiceCommand(cmdFactory cmdutil.Factory, streams genericclioptio
 			if err != nil {
 				return fmt.Errorf("failed to create client: %w", err)
 			}
-			return options.Run(cmd.Context(), k8sClient, &appsv1alpha1.NIMServiceList{})
+			return options.Run(cmd.Context(), k8sClient, appsv1alpha1.NIMServiceList{})
 		},
 	}
 	cmd.Flags().BoolVarP(&options.allNamespaces, "all-namespaces", "A", false, "If present, list the requested NIMServices across all namespaces. Namespace in current context is ignored even if specified with --namespace.")

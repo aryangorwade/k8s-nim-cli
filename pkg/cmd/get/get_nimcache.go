@@ -35,7 +35,7 @@ func NewGetNIMCacheCommand(cmdFactory cmdutil.Factory, streams genericclioptions
 			if err != nil {
 				return fmt.Errorf("failed to create client: %w", err)
 			}
-			return options.Run(cmd.Context(), k8sClient, &appsv1alpha1.NIMCacheList{})
+			return options.Run(cmd.Context(), k8sClient, appsv1alpha1.NIMCacheList{})
 		},
 	}
 	cmd.Flags().BoolVarP(&options.allNamespaces, "all-namespaces", "A", false, "If present, list the requested NIMCaches across all namespaces. Namespace in current context is ignored even if specified with --namespace.")
