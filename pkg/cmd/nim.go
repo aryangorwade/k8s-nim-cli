@@ -9,7 +9,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	"k8s-nim-operator-cli/pkg/cmd/get"
-//	"k8s-nim-operator-cli/pkg/cmd/status"
+	"k8s-nim-operator-cli/pkg/cmd/status"
 //	"k8s-nim-operator-cli/pkg/cmd/log"
 )
 
@@ -39,6 +39,7 @@ func NewNIMCommand(streams genericiooptions.IOStreams) *cobra.Command {
 	cmdFactory := cmdutil.NewFactory(configFlags)
 
 	cmd.AddCommand(get.NewGetCommand(cmdFactory, streams))
+	cmd.AddCommand(status.NewStatusCommand(cmdFactory, streams))
 //	cmd.AddCommand(status.NewSessionCommand(cmdFactory, streams))
 //	cmd.AddCommand(log.NewClusterLogCommand(cmdFactory, streams))
 
