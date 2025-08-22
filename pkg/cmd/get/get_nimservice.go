@@ -133,7 +133,10 @@ func getStorage(nimService *appsv1alpha1.NIMService) string {
 
 	// If PVC is defined.
 	if (nimService.Spec.Storage.PVC != appsv1alpha1.PersistentVolumeClaim{}) {
-		return fmt.Sprintf("PVC: %s, %s", nimService.Spec.Storage.PVC.Name, nimService.Spec.Storage.PVC.Size)
+		if nimService.Spec.Storage.PVC.Name != "" {
+			return fmt.Sprintf("PVC: %s, %s", nimService.Spec.Storage.PVC.Name, nimService.Spec.Storage.PVC.Size)
+		}
+		return fmt.Sprintf("PVC: %s", nimService.Spec.Storage.PVC.Size)	
 	}
 
 	// One of NIMCache, PVC, HostPath must be defined. 
