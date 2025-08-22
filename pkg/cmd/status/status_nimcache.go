@@ -48,11 +48,6 @@ func NewStatusNIMCacheCommand(cmdFactory cmdutil.Factory, streams genericcliopti
 func printNIMCaches(nimCacheList *appsv1alpha1.NIMCacheList, output io.Writer) error {
 	resultTablePrinter := printers.NewTablePrinter(printers.PrintOptions{})
 
-	msgCond, err := getCond(appsv1alpha1.NIMCache{})
-	if err != nil {
-		return err
-	}
-
 	resTable := &v1.Table{
 		ColumnDefinitions: []v1.TableColumnDefinition{
 			{Name: "Name", Type: "string"},
@@ -72,6 +67,26 @@ func printNIMCaches(nimCacheList *appsv1alpha1.NIMCacheList, output io.Writer) e
 			age = "<unknown>"
 		}
 
+		cond := apimeta.FindStatusCondition(nimcache.Status.Conditions, "Ready")
+		if cond == nil {
+			return fmt.Errorf("The Ready condition is not set yet.")
+		}
+
+		// Determine which condition to use for Message and LastTransitionTime.
+		msgCond := cond
+		// Prefer a Failed condition with a non-empty message.
+		if failed := apimeta.FindStatusCondition(nimcache.Status.Conditions, "Failed"); failed != nil && failed.Message != "" {
+			msgCond = failed
+		} else if msgCond.Message == "" {
+			// Fallback: find the first condition with a non-empty message.
+			for i := range nimcache.Status.Conditions {
+				if nimcache.Status.Conditions[i].Message != "" {
+					msgCond = &nimcache.Status.Conditions[i]
+					break
+				}
+			}
+		}
+
 		resTable.Rows = append(resTable.Rows, v1.TableRow{
 			Cells: []interface{}{
 				nimcache.GetName(),
@@ -89,55 +104,14 @@ func printNIMCaches(nimCacheList *appsv1alpha1.NIMCacheList, output io.Writer) e
 	return resultTablePrinter.PrintObj(resTable, output)
 }
 
-func getCond(obj interface{}) (v1.Condition, error) {
-	var conditions []v1.Condition
-
-	// Extract Conditions based on the actual type of obj
-	switch resource := obj.(type) {
-	case appsv1alpha1.NIMService:
-		conditions = resource.Status.Conditions
-	case appsv1alpha1.NIMCache:
-		conditions = resource.Status.Conditions
-	default:
-		return v1.Condition{}, fmt.Errorf("unsupported resource type %T", resource)
-	}
-
-	cond := apimeta.FindStatusCondition(conditions, "Ready")
-	if cond == nil {
-		return v1.Condition{}, fmt.Errorf("The Ready condition is not set yet.")
-	}
-
-	msgCond := cond
-	if failed := apimeta.FindStatusCondition(conditions, "Failed"); failed != nil && failed.Message != "" {
-		msgCond = failed
-	} else if msgCond.Message == "" {
-		for i := range conditions {
-			if conditions[i].Message != "" {
-				msgCond = &conditions[i]
-				break
-			}
-		}
-	}
-
-	return *msgCond, nil
-}
-
 // printSingleNIMCache prints a human-readable paragraph describing a single NIMCache.
 func printSingleNIMCache(nimcache *appsv1alpha1.NIMCache, output io.Writer) error {
-	if nimcache == nil {
-		return fmt.Errorf("nil NIMCache provided")
-	}
-
-	// Determine age since creation.
 	age := duration.HumanDuration(time.Since(nimcache.GetCreationTimestamp().Time))
 	if nimcache.GetCreationTimestamp().Time.IsZero() {
 		age = "<unknown>"
 	}
 
-	msgCond, err := getCond(nimcache)
-	if err != nil {
-		return err
-	}
+	msgCond, err := MessageCondition(nimcache)
 
 	paragraph := fmt.Sprintf(
 		"Name: %s\nNamespace: %s\nState: %s\nPVC: %s\nType/Status: %s/%s\nLast Transition Time: %s\nMessage: %s\nAge: %s\nCached NIM Profiles:\n",

@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	cmdutil "k8s.io/kubectl/pkg/cmd/util"
 
@@ -173,3 +174,28 @@ func (options *StatusResourceOptions) Run(ctx context.Context, k8sClient client.
 
 	return err
 }
+
+func MessageCondition(nimcache *appsv1alpha1.NIMCache) (*v1.Condition, error) {
+	cond := apimeta.FindStatusCondition(nimcache.Status.Conditions, "Ready")
+	if cond == nil {
+		return nil, fmt.Errorf("the Ready condition is not set yet")
+	}
+
+	msgCond := cond
+	// Prefer a Failed condition with a non-empty message
+	if failed := apimeta.FindStatusCondition(nimcache.Status.Conditions, "Failed"); failed != nil && failed.Message != "" {
+		msgCond = failed
+	} else if msgCond.Message == "" {
+		// Fallback: first condition with a non-empty message
+		for i := range nimcache.Status.Conditions {
+			if nimcache.Status.Conditions[i].Message != "" {
+				msgCond = &nimcache.Status.Conditions[i]
+				break
+			}
+		}
+	}
+
+	return msgCond, nil
+}
+
+
