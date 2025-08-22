@@ -120,7 +120,7 @@ func statusResources(ctx context.Context, options *StatusResourceOptions, k8sCli
 			}
 			return nil, errors.New(errMsg)
 		}
-	
+
 	case appsv1alpha1.NIMCacheList:
 		// Cast resourceList to NIMCacheList.
 		nimCacheList, ok := resourceList.(*appsv1alpha1.NIMCacheList)

@@ -24,7 +24,7 @@ func NewStatusCommand(cmdFactory cmdutil.Factory, streams genericclioptions.IOSt
 		},
 	}
 
-	// cmd.AddCommand(NewGetNIMCacheCommand(cmdFactory, streams))
+	cmd.AddCommand(NewStatusNIMCacheCommand(cmdFactory, streams))
 	cmd.AddCommand(NewStatusNIMServiceCommand(cmdFactory, streams))
 	return cmd
 }
