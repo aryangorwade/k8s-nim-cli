@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"time"
+
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 
 	"github.com/spf13/cobra"
@@ -14,6 +15,7 @@ import (
 	cmdutil "k8s.io/kubectl/pkg/cmd/util"
 
 	"k8s-nim-operator-cli/pkg/util/client"
+
 	appsv1alpha1 "github.com/NVIDIA/k8s-nim-operator/api/apps/v1alpha1"
 )
 
@@ -21,12 +23,12 @@ func NewStatusNIMServiceCommand(cmdFactory cmdutil.Factory, streams genericcliop
 	options := NewStatusResourceOptions(cmdFactory, streams)
 
 	cmd := &cobra.Command{
-		Use:               "nimservice [NAME]",
-		Aliases:           []string{"nimservices"},
-		Short:             "Get NIMService information.",
-		SilenceUsage:      true,
+		Use:          "nimservice [NAME]",
+		Aliases:      []string{"nimservices"},
+		Short:        "Get NIMService information.",
+		SilenceUsage: true,
 		// ValidArgsFunction: completion.RayClusterCompletionFunc(cmdFactory),
-		Args:              cobra.MaximumNArgs(1),
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := options.CompleteNamespace(args, cmd); err != nil {
 				return err
@@ -53,7 +55,7 @@ func printNIMServices(nimServiceList *appsv1alpha1.NIMServiceList, output io.Wri
 			{Name: "State", Type: "string"},
 			{Name: "Available Replicas", Type: "string"},
 			{Name: "Type/Status", Type: "int"},
-			{Name: "Last Transition Time", Type: "string"}, 
+			{Name: "Last Transition Time", Type: "string"},
 			{Name: "Message", Type: "string"},
 			{Name: "Age", Type: "string"},
 		},
@@ -70,15 +72,30 @@ func printNIMServices(nimServiceList *appsv1alpha1.NIMServiceList, output io.Wri
 			return fmt.Errorf("The Ready condition is not set yet.")
 		}
 
+		// Determine which condition to use for Message and LastTransitionTime.
+		msgCond := cond
+		// Prefer a Failed condition with a non-empty message.
+		if failed := apimeta.FindStatusCondition(nimservice.Status.Conditions, "Failed"); failed != nil && failed.Message != "" {
+			msgCond = failed
+		} else if msgCond.Message == "" {
+			// Fallback: find the first condition with a non-empty message.
+			for i := range nimservice.Status.Conditions {
+				if nimservice.Status.Conditions[i].Message != "" {
+					msgCond = &nimservice.Status.Conditions[i]
+					break
+				}
+			}
+		}
+
 		resTable.Rows = append(resTable.Rows, v1.TableRow{
 			Cells: []interface{}{
 				nimservice.GetName(),
-				nimservice.GetNamespace(), 
+				nimservice.GetNamespace(),
 				nimservice.Status.State,
-				nimservice.Status.AvailableReplicas, 
+				nimservice.Status.AvailableReplicas,
 				fmt.Sprintf("%s/%s", cond.Type, cond.Status),
-				cond.LastTransitionTime,
-				cond.Message,
+				msgCond.LastTransitionTime,
+				msgCond.Message,
 				age,
 			},
 		})
