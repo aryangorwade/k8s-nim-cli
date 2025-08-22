@@ -11,6 +11,7 @@ import (
 	cmdutil "k8s.io/kubectl/pkg/cmd/util"
 
 	"k8s-nim-operator-cli/pkg/util/client"
+
 	appsv1alpha1 "github.com/NVIDIA/k8s-nim-operator/api/apps/v1alpha1"
 )
 
@@ -50,7 +51,7 @@ func (options *StatusResourceOptions) CompleteNamespace(args []string, cmd *cobr
 func statusResources(ctx context.Context, options *StatusResourceOptions, k8sClient client.Client, resourceListType interface{}) (interface{}, error) {
 	var resourceList interface{}
 	var err error
-	
+
 	switch ltype := resourceListType.(type) {
 	case appsv1alpha1.NIMServiceList:
 		resourceList = ltype
@@ -75,7 +76,7 @@ func statusResources(ctx context.Context, options *StatusResourceOptions, k8sCli
 			resourceList, err = k8sClient.NIMClient().AppsV1alpha1().NIMServices("").List(ctx, listopts)
 			if err != nil {
 				return nil, fmt.Errorf("unable to retrieve NIMServices for all namespaces: %w", err)
-			}	
+			}
 
 		case appsv1alpha1.NIMCacheList:
 			resourceList, err = k8sClient.NIMClient().AppsV1alpha1().NIMCaches("").List(ctx, listopts)
@@ -163,8 +164,11 @@ func (options *StatusResourceOptions) Run(ctx context.Context, k8sClient client.
 		if !ok {
 			return fmt.Errorf("failed to cast resourceList to NIMCacheList")
 		}
-		print(nimCacheList)
-		//return printNIMCaches(nimCacheList, options.ioStreams.Out)
+		// Determine if a single NIMCache was requested and returned
+		if options.resourcename != "" && len(nimCacheList.Items) == 1 {
+			return printSingleNIMCache(&nimCacheList.Items[0], options.ioStreams.Out)
+		}
+		return printNIMCaches(nimCacheList, options.ioStreams.Out)
 	}
 
 	return err
