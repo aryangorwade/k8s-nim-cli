@@ -5,8 +5,6 @@ import (
 	"io"
 	"time"
 
-	apimeta "k8s.io/apimachinery/pkg/api/meta"
-
 	"github.com/spf13/cobra"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/duration"
@@ -67,24 +65,9 @@ func printNIMCaches(nimCacheList *appsv1alpha1.NIMCacheList, output io.Writer) e
 			age = "<unknown>"
 		}
 
-		cond := apimeta.FindStatusCondition(nimcache.Status.Conditions, "Ready")
-		if cond == nil {
-			return fmt.Errorf("The Ready condition is not set yet.")
-		}
-
-		// Determine which condition to use for Message and LastTransitionTime.
-		msgCond := cond
-		// Prefer a Failed condition with a non-empty message.
-		if failed := apimeta.FindStatusCondition(nimcache.Status.Conditions, "Failed"); failed != nil && failed.Message != "" {
-			msgCond = failed
-		} else if msgCond.Message == "" {
-			// Fallback: find the first condition with a non-empty message.
-			for i := range nimcache.Status.Conditions {
-				if nimcache.Status.Conditions[i].Message != "" {
-					msgCond = &nimcache.Status.Conditions[i]
-					break
-				}
-			}
+		msgCond, err := MessageCondition(&nimcache)
+		if err != nil {
+			return err
 		}
 
 		resTable.Rows = append(resTable.Rows, v1.TableRow{
@@ -112,6 +95,9 @@ func printSingleNIMCache(nimcache *appsv1alpha1.NIMCache, output io.Writer) erro
 	}
 
 	msgCond, err := MessageCondition(nimcache)
+	if err != nil {
+		return err
+	}
 
 	paragraph := fmt.Sprintf(
 		"Name: %s\nNamespace: %s\nState: %s\nPVC: %s\nType/Status: %s/%s\nLast Transition Time: %s\nMessage: %s\nAge: %s\nCached NIM Profiles:\n",
