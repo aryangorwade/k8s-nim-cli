@@ -127,12 +127,12 @@ func getScale(nimService *appsv1alpha1.NIMService) string {
 
 func getStorage(nimService *appsv1alpha1.NIMService) string {
 	// If NIMCache is defined.
-	if !reflect.DeepEqual(nimService.Spec.Storage.NIMCache, &appsv1alpha1.NIMCacheVolSpec{}) {
+	if (nimService.Spec.Storage.NIMCache != appsv1alpha1.NIMCacheVolSpec{}) {
 		return fmt.Sprintf("NIMCache: name: %s, profile: %s", nimService.Spec.Storage.NIMCache.Name, nimService.Spec.Storage.NIMCache.Profile)
 	}
 
 	// If PVC is defined.
-	if !reflect.DeepEqual(nimService.Spec.Storage.NIMCache, &appsv1alpha1.PersistentVolumeClaim{}) {
+	if (nimService.Spec.Storage.PVC != appsv1alpha1.PersistentVolumeClaim{}) {
 		return fmt.Sprintf("PVC: %s, %s", nimService.Spec.Storage.PVC.Name, nimService.Spec.Storage.PVC.Size)
 	}
 
