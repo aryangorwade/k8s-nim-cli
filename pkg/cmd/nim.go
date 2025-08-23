@@ -10,7 +10,7 @@ import (
 
 	"k8s-nim-operator-cli/pkg/cmd/get"
 	"k8s-nim-operator-cli/pkg/cmd/status"
-//	"k8s-nim-operator-cli/pkg/cmd/log"
+	// "k8s-nim-operator-cli/pkg/cmd/log"
 )
 
 func init() {
@@ -40,8 +40,10 @@ func NewNIMCommand(streams genericiooptions.IOStreams) *cobra.Command {
 
 	cmd.AddCommand(get.NewGetCommand(cmdFactory, streams))
 	cmd.AddCommand(status.NewStatusCommand(cmdFactory, streams))
-//	cmd.AddCommand(status.NewSessionCommand(cmdFactory, streams))
-//	cmd.AddCommand(log.NewClusterLogCommand(cmdFactory, streams))
+	//	cmd.AddCommand(status.NewSessionCommand(cmdFactory, streams))
+	//	cmd.AddCommand(log.NewClusterLogCommand(cmdFactory, streams))
 
 	return cmd
 }
+
+// TODO: make universal resource getter file. Solve problem of options.NewUniversal....

@@ -5,8 +5,6 @@ import (
 	"io"
 	"time"
 
-	apimeta "k8s.io/apimachinery/pkg/api/meta"
-
 	"github.com/spf13/cobra"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/duration"
@@ -41,7 +39,7 @@ func NewStatusNIMServiceCommand(cmdFactory cmdutil.Factory, streams genericcliop
 			return options.Run(cmd.Context(), k8sClient, appsv1alpha1.NIMServiceList{})
 		},
 	}
-	cmd.Flags().BoolVarP(&options.allNamespaces, "all-namespaces", "A", false, "If present, list the requested NIMServices across all namespaces. Namespace in current context is ignored even if specified with --namespace.")
+	cmd.Flags().BoolVarP(&options.allNamespaces, "all-namespaces", "A", false, "If present, list the requested NIMService status across all namespaces. Namespace in current context is ignored even if specified with --namespace.")
 	return cmd
 }
 
@@ -67,24 +65,10 @@ func printNIMServices(nimServiceList *appsv1alpha1.NIMServiceList, output io.Wri
 			age = "<unknown>"
 		}
 
-		cond := apimeta.FindStatusCondition(nimservice.Status.Conditions, "Ready")
-		if cond == nil {
-			return fmt.Errorf("The Ready condition is not set yet.")
-		}
+		msgCond, err := MessageCondition(nimservice)
 
-		// Determine which condition to use for Message and LastTransitionTime.
-		msgCond := cond
-		// Prefer a Failed condition with a non-empty message.
-		if failed := apimeta.FindStatusCondition(nimservice.Status.Conditions, "Failed"); failed != nil && failed.Message != "" {
-			msgCond = failed
-		} else if msgCond.Message == "" {
-			// Fallback: find the first condition with a non-empty message.
-			for i := range nimservice.Status.Conditions {
-				if nimservice.Status.Conditions[i].Message != "" {
-					msgCond = &nimservice.Status.Conditions[i]
-					break
-				}
-			}
+		if err != nil {
+			return err
 		}
 
 		resTable.Rows = append(resTable.Rows, v1.TableRow{
@@ -93,7 +77,7 @@ func printNIMServices(nimServiceList *appsv1alpha1.NIMServiceList, output io.Wri
 				nimservice.GetNamespace(),
 				nimservice.Status.State,
 				nimservice.Status.AvailableReplicas,
-				fmt.Sprintf("%s/%s", cond.Type, cond.Status),
+				fmt.Sprintf("%s/%s", msgCond.Type, msgCond.Status),
 				msgCond.LastTransitionTime,
 				msgCond.Message,
 				age,

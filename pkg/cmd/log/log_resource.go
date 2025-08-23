@@ -1,4 +1,4 @@
-package status
+package log
 
 import (
 	"context"
@@ -7,7 +7,6 @@ import (
 
 	"github.com/spf13/cobra"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	cmdutil "k8s.io/kubectl/pkg/cmd/util"
 
@@ -16,7 +15,7 @@ import (
 	appsv1alpha1 "github.com/NVIDIA/k8s-nim-operator/api/apps/v1alpha1"
 )
 
-type StatusResourceOptions struct {
+type LogResourceOptions struct {
 	cmdFactory    cmdutil.Factory
 	ioStreams     *genericclioptions.IOStreams
 	namespace     string
@@ -24,15 +23,15 @@ type StatusResourceOptions struct {
 	allNamespaces bool
 }
 
-func NewStatusResourceOptions(cmdFactory cmdutil.Factory, streams genericclioptions.IOStreams) *StatusResourceOptions {
-	return &StatusResourceOptions{
+func NewLogResourceOptions(cmdFactory cmdutil.Factory, streams genericclioptions.IOStreams) *LogResourceOptions {
+	return &LogResourceOptions{
 		cmdFactory: cmdFactory,
 		ioStreams:  &streams,
 	}
 }
 
-// Populates GetResourceOptions with namespace and resource name (if present).
-func (options *StatusResourceOptions) CompleteNamespace(args []string, cmd *cobra.Command) error {
+// Populates LogResourceOptions with namespace and resource name (if present).
+func (options *LogResourceOptions) CompleteNamespace(args []string, cmd *cobra.Command) error {
 	namespace, err := cmd.Flags().GetString("namespace")
 	if err != nil {
 		return fmt.Errorf("failed to get namespace: %w", err)
@@ -49,7 +48,7 @@ func (options *StatusResourceOptions) CompleteNamespace(args []string, cmd *cobr
 	return nil
 }
 
-func statusResources(ctx context.Context, options *StatusResourceOptions, k8sClient client.Client, resourceListType interface{}) (interface{}, error) {
+func logResources(ctx context.Context, options *LogResourceOptions, k8sClient client.Client, resourceListType interface{}) (interface{}, error) {
 	var resourceList interface{}
 	var err error
 
@@ -143,8 +142,8 @@ func statusResources(ctx context.Context, options *StatusResourceOptions, k8sCli
 	return resourceList, nil
 }
 
-func (options *StatusResourceOptions) Run(ctx context.Context, k8sClient client.Client, resourceListType interface{}) error {
-	resourceList, err := statusResources(ctx, options, k8sClient, resourceListType)
+func (options *LogResourceOptions) Run(ctx context.Context, k8sClient client.Client, resourceListType interface{}) error {
+	resourceList, err := logResources(ctx, options, k8sClient, resourceListType)
 	if err != nil {
 		return err
 	}
@@ -165,45 +164,8 @@ func (options *StatusResourceOptions) Run(ctx context.Context, k8sClient client.
 		if !ok {
 			return fmt.Errorf("failed to cast resourceList to NIMCacheList")
 		}
-		// Determine if a single NIMCache was requested and returned
-		if options.resourcename != "" && len(nimCacheList.Items) == 1 {
-			return printSingleNIMCache(&nimCacheList.Items[0], options.ioStreams.Out)
-		}
 		return printNIMCaches(nimCacheList, options.ioStreams.Out)
 	}
 
 	return err
-}
-
-func messageConditionFrom(conds []v1.Condition) (*v1.Condition, error) {
-	// Prefer a Failed with a non-empty message
-	if failed := apimeta.FindStatusCondition(conds, "Failed"); failed != nil && failed.Message != "" {
-		return failed, nil
-	}
-	// Fallback to Ready if present (message may be empty)
-	if ready := apimeta.FindStatusCondition(conds, "Ready"); ready != nil {
-		return ready, nil
-	}
-	// Otherwise: first condition with a non-empty message
-	for i := range conds {
-		if conds[i].Message != "" {
-			return &conds[i], nil
-		}
-	}
-	if len(conds) > 0 {
-		// Last resort: return the first condition even if it has no message
-		return &conds[0], nil
-	}
-	return nil, fmt.Errorf("no conditions present")
-}
-
-func MessageCondition(obj interface{}) (*v1.Condition, error) {
-	switch t := obj.(type) {
-	case *appsv1alpha1.NIMCache:
-		return messageConditionFrom(t.Status.Conditions)
-	case *appsv1alpha1.NIMService:
-		return messageConditionFrom(t.Status.Conditions)
-	default:
-		return nil, fmt.Errorf("unsupported type %T (want *NIMCache or *NIMService)", obj)
-	}
 }

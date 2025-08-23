@@ -23,7 +23,8 @@ func NewStatusNIMCacheCommand(cmdFactory cmdutil.Factory, streams genericcliopti
 	cmd := &cobra.Command{
 		Use:          "nimcache [NAME]",
 		Aliases:      []string{"nimcaches"},
-		Short:        "Get NIMCache information.",
+		Short:        "Get NIMCache status.",
+		Long: 		  "Get detailed status information about one NIMCache, or a summary of all NIMCaches.",
 		SilenceUsage: true,
 		// ValidArgsFunction: completion.RayClusterCompletionFunc(cmdFactory),
 		Args: cobra.MaximumNArgs(1),
@@ -39,7 +40,7 @@ func NewStatusNIMCacheCommand(cmdFactory cmdutil.Factory, streams genericcliopti
 			return options.Run(cmd.Context(), k8sClient, appsv1alpha1.NIMCacheList{})
 		},
 	}
-	cmd.Flags().BoolVarP(&options.allNamespaces, "all-namespaces", "A", false, "If present, list the requested NIMCaches across all namespaces. Namespace in current context is ignored even if specified with --namespace.")
+	cmd.Flags().BoolVarP(&options.allNamespaces, "all-namespaces", "A", false, "If present, list the requested NIMCache status across all namespaces. Namespace in current context is ignored even if specified with --namespace.")
 	return cmd
 }
 
