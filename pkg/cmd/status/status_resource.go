@@ -175,27 +175,22 @@ func (options *StatusResourceOptions) Run(ctx context.Context, k8sClient client.
 	return err
 }
 
-func MessageCondition(nimcache *appsv1alpha1.NIMCache) (*v1.Condition, error) {
-	cond := apimeta.FindStatusCondition(nimcache.Status.Conditions, "Ready")
-	if cond == nil {
-		return nil, fmt.Errorf("the Ready condition is not set yet")
+func MessageCondition(nc *appsv1alpha1.NIMCache) (*v1.Condition, error) {
+	// Prefer a Failed with a message
+	if failed := apimeta.FindStatusCondition(nc.Status.Conditions, "Failed"); failed != nil && failed.Message != "" {
+		return failed, nil
 	}
-
-	msgCond := cond
-	// Prefer a Failed condition with a non-empty message
-	if failed := apimeta.FindStatusCondition(nimcache.Status.Conditions, "Failed"); failed != nil && failed.Message != "" {
-		msgCond = failed
-	} else if msgCond.Message == "" {
-		// Fallback: first condition with a non-empty message
-		for i := range nimcache.Status.Conditions {
-			if nimcache.Status.Conditions[i].Message != "" {
-				msgCond = &nimcache.Status.Conditions[i]
-				break
-			}
+	// Fallback to Ready if present
+	if ready := apimeta.FindStatusCondition(nc.Status.Conditions, "Ready"); ready != nil && (ready.Message != "" || true) {
+		return ready, nil
+	}
+	// Otherwise first condition with a non-empty message
+	for i := range nc.Status.Conditions {
+		if nc.Status.Conditions[i].Message != "" {
+			return &nc.Status.Conditions[i], nil
 		}
 	}
-
-	return msgCond, nil
+	return nil, fmt.Errorf("no conditions with a message found")
 }
 
 
