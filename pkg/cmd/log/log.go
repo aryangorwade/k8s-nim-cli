@@ -44,9 +44,6 @@ func NewLogCommand(cmdFactory cmdutil.Factory, streams genericclioptions.IOStrea
 			return nil
 		},
 	}
-
-	cmd.AddCommand(NewLogNIMServiceCommand(cmdFactory, streams))
-	cmd.AddCommand(NewLogNIMCacheCommand(cmdFactory, streams))
 	return cmd
 }
 
@@ -60,19 +57,25 @@ func Run(ctx context.Context, options *util.FetchResourceOptions, k8sClient clie
 
 	case util.NIMService:
 		// Cast resourceList to NIMServiceList.
+		/*
 		nimServiceList, ok := resourceList.(*appsv1alpha1.NIMServiceList)
 		if !ok {
 			return fmt.Errorf("failed to cast resourceList to NIMServiceList")
 		}
 		return printNIMServices(nimServiceList, options.IoStreams.Out)
+		*/ 
+		return nil
 
 	case util.NIMCache:
+		/*
 		// Cast resourceList to NIMCacheList.
 		nimCacheList, ok := resourceList.(*appsv1alpha1.NIMCacheList)
 		if !ok {
 			return fmt.Errorf("failed to cast resourceList to NIMCacheList")
 		}
 		return printNIMCaches(nimCacheList, options.IoStreams.Out)
+		*/ 
+		return nil
 	}
 
 	return err
