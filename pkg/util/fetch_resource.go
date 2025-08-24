@@ -50,8 +50,17 @@ func (options *FetchResourceOptions) CompleteNamespace(args []string, cmd *cobra
 		options.ResourceName = args[0]
 	}
 	// There would be exactly two arguments if log calls this (nim LOG NIMSERVICE META-LLAMA-3B).
-	if len(args) == 2 {
-		options.ResourceType = ResourceType(strings.ToLower(args[0]))
+	if len(args) == 2 {	
+		resourceType := ResourceType(strings.ToLower(args[0]))
+
+		// Validating ResourceType.
+		switch resourceType {
+		case NIMService, NIMCache:
+			options.ResourceType = resourceType
+		default:
+			return fmt.Errorf("invalid resource type %q. Valid types are: nimservice, nimcache", args[0])
+		}	
+
 		options.ResourceName = args[1]
 	}
 

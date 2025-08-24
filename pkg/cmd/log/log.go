@@ -20,6 +20,15 @@ func NewLogCommand(cmdFactory cmdutil.Factory, streams genericclioptions.IOStrea
 	cmd := &cobra.Command{
 		Use:          "log RESOURCE NAME",
 		Short:        "Display the logs of a specified NIM Operator custom resource.",
+		Long: `Display the logs of a specified NIM Operator custom resource.
+
+		Available resource types:
+		  nimcache    Get NIMCache logs.
+		  nimservice  Get NIMService logs.
+		
+		Examples:
+		  nim log nimservice my-service
+		  nim log nimcache my-cache`,		
 		Aliases:      []string{"logs"},
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
