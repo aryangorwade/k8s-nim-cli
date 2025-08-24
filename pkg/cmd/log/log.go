@@ -20,6 +20,19 @@ func NewLogCommand(cmdFactory cmdutil.Factory, streams genericclioptions.IOStrea
 	cmd := &cobra.Command{
 		Use:          "log RESOURCE NAME",
 		Short:        "Display the logs of a specified NIM Operator custom resource.",
+		Long: 
+		`Display logs for NIM Operator custom resources.
+
+		Supported RESOURCE types:
+		  - nimcache
+		  - nimservice
+		
+		Examples:
+		  # Show logs for a NIMCache resource named "my-cache"
+		  mycli log nimcache my-cache
+		
+		  # Show logs for a NIMService resource named "my-service"
+		  mycli log nimservice my-service`,
 		Aliases:      []string{"logs"},
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -44,25 +57,6 @@ func NewLogCommand(cmdFactory cmdutil.Factory, streams genericclioptions.IOStrea
 			return nil
 		},
 	}
-
-	// Dummy subcommands for help display only.
-	cmd.AddCommand(&cobra.Command{
-		Use:    "nimcache",
-		Short:  "Get NIMCache logs.",
-		Hidden: false,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("use 'nim log nimcache NAME' instead")
-		},
-	})
-
-	cmd.AddCommand(&cobra.Command{
-		Use:    "nimservice", 
-		Short:  "Get NIMService logs.",
-		Hidden: false,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("use 'nim log nimservice NAME' instead")
-		},
-	})
 	
 	return cmd
 }
