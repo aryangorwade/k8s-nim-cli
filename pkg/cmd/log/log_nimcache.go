@@ -1,37 +1,36 @@
-package get
+package log
 
 import (
 	"fmt"
 	"io"
+	"time"
 	"reflect"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
-	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/duration"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"k8s.io/cli-runtime/pkg/printers"
 	cmdutil "k8s.io/kubectl/pkg/cmd/util"
-
+	corev1 "k8s.io/api/core/v1"
 	util "k8s-nim-operator-cli/pkg/util"
-	"k8s-nim-operator-cli/pkg/util/client"
 
+	"k8s-nim-operator-cli/pkg/util/client"
 	appsv1alpha1 "github.com/NVIDIA/k8s-nim-operator/api/apps/v1alpha1"
 )
 
-func NewGetNIMServiceCommand(cmdFactory cmdutil.Factory, streams genericclioptions.IOStreams) *cobra.Command {
+func NewLogNIMCacheCommand(cmdFactory cmdutil.Factory, streams genericclioptions.IOStreams) *cobra.Command {
 	options := util.NewFetchResourceOptions(cmdFactory, streams)
 
 	cmd := &cobra.Command{
-		Use:          "nimservice [NAME]",
-		Aliases:      []string{"nimservices"},
-		Short:        "Get NIMService information.",
-		SilenceUsage: true,
+		Use:               "nimcache NAME",
+		Aliases:           []string{""},
+		Short:             "Get NIMCache logs.",
+		SilenceUsage:      true,
 		// ValidArgsFunction: completion.RayClusterCompletionFunc(cmdFactory),
-		Args: cobra.MaximumNArgs(1),
+		Args:              cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := options.CompleteNamespace(args, cmd); err != nil {
 				return err
@@ -41,14 +40,14 @@ func NewGetNIMServiceCommand(cmdFactory cmdutil.Factory, streams genericclioptio
 			if err != nil {
 				return fmt.Errorf("failed to create client: %w", err)
 			}
-			return Run(cmd.Context(), options, k8sClient, appsv1alpha1.NIMServiceList{})
+			return Run(cmd.Context(), options, k8sClient, appsv1alpha1.NIMCacheList{})
 		},
 	}
-	cmd.Flags().BoolVarP(&options.AllNamespaces, "all-namespaces", "A", false, "If present, list the requested NIMServices across all namespaces. Namespace in current context is ignored even if specified with --namespace.")
+	cmd.Flags().BoolVarP(&options.AllNamespaces, "all-namespaces", "A", false, "If present, list the requested NIMCache's logs across all namespaces. Namespace in current context is ignored even if specified with --namespace.")
 	return cmd
 }
 
-func printNIMServices(nimServiceList *appsv1alpha1.NIMServiceList, output io.Writer) error {
+func printNIMCaches(nimServiceList *appsv1alpha1.NIMServiceList, output io.Writer) error {
 	resultTablePrinter := printers.NewTablePrinter(printers.PrintOptions{})
 
 	resTable := &v1.Table{
@@ -58,10 +57,10 @@ func printNIMServices(nimServiceList *appsv1alpha1.NIMServiceList, output io.Wri
 			{Name: "Image", Type: "string"},
 			{Name: "Expose Service", Type: "string"},
 			{Name: "Replicas", Type: "int"},
-			{Name: "Scale", Type: "string"},     // if enabled, shows HPA maxReplicas / minReplicas
-			{Name: "Storage", Type: "string"},   // the kind and if pvc the pvc details
+			{Name: "Scale", Type: "string"}, // if enabled, shows HPA maxReplicas / minReplicas
+			{Name: "Storage", Type: "string"}, // the kind and if pvc the pvc details
 			{Name: "Resources", Type: "string"}, // if any limits/resquests/claims shows them here
-			{Name: "State", Type: "string"},     // only status
+			{Name: "State", Type: "string"},// only status
 			{Name: "Age", Type: "string"},
 		},
 	}
@@ -75,14 +74,14 @@ func printNIMServices(nimServiceList *appsv1alpha1.NIMServiceList, output io.Wri
 		resTable.Rows = append(resTable.Rows, v1.TableRow{
 			Cells: []interface{}{
 				nimservice.GetName(),
-				nimservice.GetNamespace(),
+				nimservice.GetNamespace(), 
 				fmt.Sprintf("%s %s", nimservice.Spec.Image.Repository, nimservice.Spec.Image.Tag),
 				getExpose(&nimservice),
 				nimservice.Spec.Replicas,
 				getScale(&nimservice),
 				getStorage(&nimservice),
 				getNIMServiceResources(&nimservice),
-				nimservice.Status.State,
+				nimservice.Status.State, 
 				age,
 			},
 		})
@@ -112,6 +111,7 @@ func getExpose(nimService *appsv1alpha1.NIMService) string {
 	}
 }
 
+
 func getScale(nimService *appsv1alpha1.NIMService) string {
 	if nimService.Spec.Scale.Enabled == nil || !*nimService.Spec.Scale.Enabled {
 		return "disabled"
@@ -137,10 +137,10 @@ func getStorage(nimService *appsv1alpha1.NIMService) string {
 		if nimService.Spec.Storage.PVC.Name != "" {
 			return fmt.Sprintf("PVC: %s, %s", nimService.Spec.Storage.PVC.Name, nimService.Spec.Storage.PVC.Size)
 		}
-		return fmt.Sprintf("PVC: %s", nimService.Spec.Storage.PVC.Size)
+		return fmt.Sprintf("PVC: %s", nimService.Spec.Storage.PVC.Size)	
 	}
 
-	// One of NIMCache, PVC, HostPath must be defined.
+	// One of NIMCache, PVC, HostPath must be defined. 
 	return fmt.Sprintf("HostPath: %s", *nimService.Spec.Storage.HostPath)
 }
 
@@ -165,27 +165,27 @@ func getNIMServiceResources(nimService *appsv1alpha1.NIMService) string {
 }
 
 func resourceListToOneLine(rl corev1.ResourceList) string {
-	var parts []string
+    var parts []string
 
-	// Sort keys for stable output
-	keys := make([]string, 0, len(rl))
-	for k := range rl {
-		keys = append(keys, string(k))
-	}
-	sort.Strings(keys)
+    // Sort keys for stable output
+    keys := make([]string, 0, len(rl))
+    for k := range rl {
+        keys = append(keys, string(k))
+    }
+    sort.Strings(keys)
 
-	for _, k := range keys {
-		v := rl[corev1.ResourceName(k)]
-		parts = append(parts, fmt.Sprintf("%s: %s", k, v.String()))
-	}
+    for _, k := range keys {
+        v := rl[corev1.ResourceName(k)]
+        parts = append(parts, fmt.Sprintf("%s: %s", k, v.String()))
+    }
 
-	return strings.Join(parts, ", ")
+    return strings.Join(parts, ", ")
 }
 
 func claimsToOneLine(claims []corev1.ResourceClaim) string {
-	var parts []string
-	for _, c := range claims {
-		parts = append(parts, fmt.Sprintf("%s(%s)", c.Name, c.Request))
-	}
-	return strings.Join(parts, ", ")
+    var parts []string
+    for _, c := range claims {
+        parts = append(parts, fmt.Sprintf("%s(%s)", c.Name, c.Request))
+    }
+    return strings.Join(parts, ", ")
 }

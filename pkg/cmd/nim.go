@@ -45,5 +45,3 @@ func NewNIMCommand(streams genericiooptions.IOStreams) *cobra.Command {
 
 	return cmd
 }
-
-// TODO: make universal resource getter file. Solve problem of options.NewUniversal....

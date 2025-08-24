@@ -1,9 +1,10 @@
-package log
+package util
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -12,26 +13,29 @@ import (
 
 	"k8s-nim-operator-cli/pkg/util/client"
 
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
+
 	appsv1alpha1 "github.com/NVIDIA/k8s-nim-operator/api/apps/v1alpha1"
 )
 
-type LogResourceOptions struct {
+type FetchResourceOptions struct {
 	cmdFactory    cmdutil.Factory
-	ioStreams     *genericclioptions.IOStreams
+	IoStreams     *genericclioptions.IOStreams
 	namespace     string
-	resourcename  string
-	allNamespaces bool
+	ResourceName  string
+	ResourceType  ResourceType
+	AllNamespaces bool
 }
 
-func NewLogResourceOptions(cmdFactory cmdutil.Factory, streams genericclioptions.IOStreams) *LogResourceOptions {
-	return &LogResourceOptions{
+func NewFetchResourceOptions(cmdFactory cmdutil.Factory, streams genericclioptions.IOStreams) *FetchResourceOptions {
+	return &FetchResourceOptions{
 		cmdFactory: cmdFactory,
-		ioStreams:  &streams,
+		IoStreams:  &streams,
 	}
 }
 
-// Populates LogResourceOptions with namespace and resource name (if present).
-func (options *LogResourceOptions) CompleteNamespace(args []string, cmd *cobra.Command) error {
+// Populates FetchResourceOptions with namespace and resource name (if present).
+func (options *FetchResourceOptions) CompleteNamespace(args []string, cmd *cobra.Command) error {
 	namespace, err := cmd.Flags().GetString("namespace")
 	if err != nil {
 		return fmt.Errorf("failed to get namespace: %w", err)
@@ -41,14 +45,20 @@ func (options *LogResourceOptions) CompleteNamespace(args []string, cmd *cobra.C
 		options.namespace = "default"
 	}
 
-	if len(args) >= 1 {
-		options.resourcename = args[0]
+	// When get and status call this, there will only ever be one argument at most (nim get NIMSERVICE NAME or nim get NIMSERVICES).
+	if len(args) == 1 {
+		options.ResourceName = args[0]
+	}
+	// There would only be two arguments if log calls this (nim LOG NIMSERVICE META-LLAMA-3B).
+	if len(args) == 2 {
+		options.ResourceType = ResourceType(strings.ToLower(args[0]))
+		options.ResourceName = args[1]
 	}
 
 	return nil
 }
 
-func logResources(ctx context.Context, options *LogResourceOptions, k8sClient client.Client, resourceListType interface{}) (interface{}, error) {
+func FetchResources(ctx context.Context, options *FetchResourceOptions, k8sClient client.Client, resourceListType interface{}) (interface{}, error) {
 	var resourceList interface{}
 	var err error
 
@@ -62,13 +72,13 @@ func logResources(ctx context.Context, options *LogResourceOptions, k8sClient cl
 	}
 
 	listopts := v1.ListOptions{}
-	if options.resourcename != "" {
+	if options.ResourceName != "" {
 		listopts = v1.ListOptions{
-			FieldSelector: fmt.Sprintf("metadata.name=%s", options.resourcename),
+			FieldSelector: fmt.Sprintf("metadata.name=%s", options.ResourceName),
 		}
 	}
 
-	if options.allNamespaces {
+	if options.AllNamespaces {
 		// Determine type to populate list if no namespace specified.
 		switch resourceListType.(type) {
 
@@ -111,9 +121,9 @@ func logResources(ctx context.Context, options *LogResourceOptions, k8sClient cl
 			return nil, fmt.Errorf("failed to cast resourceList to NIMServiceList")
 		}
 
-		if options.resourcename != "" && len(nimServiceList.Items) == 0 {
-			errMsg := fmt.Sprintf("NIMService %s not found", options.resourcename)
-			if options.allNamespaces {
+		if options.ResourceName != "" && len(nimServiceList.Items) == 0 {
+			errMsg := fmt.Sprintf("NIMService %s not found", options.ResourceName)
+			if options.AllNamespaces {
 				errMsg += " in any namespace"
 			} else {
 				errMsg += fmt.Sprintf(" in namespace %s", options.namespace)
@@ -128,9 +138,9 @@ func logResources(ctx context.Context, options *LogResourceOptions, k8sClient cl
 			return nil, fmt.Errorf("failed to cast resourceList to NIMCacheList")
 		}
 
-		if options.resourcename != "" && len(nimCacheList.Items) == 0 {
-			errMsg := fmt.Sprintf("NIMCache %s not found", options.resourcename)
-			if options.allNamespaces {
+		if options.ResourceName != "" && len(nimCacheList.Items) == 0 {
+			errMsg := fmt.Sprintf("NIMCache %s not found", options.ResourceName)
+			if options.AllNamespaces {
 				errMsg += " in any namespace"
 			} else {
 				errMsg += fmt.Sprintf(" in namespace %s", options.namespace)
@@ -142,30 +152,35 @@ func logResources(ctx context.Context, options *LogResourceOptions, k8sClient cl
 	return resourceList, nil
 }
 
-func (options *LogResourceOptions) Run(ctx context.Context, k8sClient client.Client, resourceListType interface{}) error {
-	resourceList, err := logResources(ctx, options, k8sClient, resourceListType)
-	if err != nil {
-		return err
+func messageConditionFrom(conds []v1.Condition) (*v1.Condition, error) {
+	// Prefer a Failed with a non-empty message
+	if failed := apimeta.FindStatusCondition(conds, "Failed"); failed != nil && failed.Message != "" {
+		return failed, nil
 	}
-
-	switch resourceListType.(type) {
-
-	case appsv1alpha1.NIMServiceList:
-		// Cast resourceList to NIMServiceList.
-		nimServiceList, ok := resourceList.(*appsv1alpha1.NIMServiceList)
-		if !ok {
-			return fmt.Errorf("failed to cast resourceList to NIMServiceList")
-		}
-		return printNIMServices(nimServiceList, options.ioStreams.Out)
-
-	case appsv1alpha1.NIMCacheList:
-		// Cast resourceList to NIMCacheList.
-		nimCacheList, ok := resourceList.(*appsv1alpha1.NIMCacheList)
-		if !ok {
-			return fmt.Errorf("failed to cast resourceList to NIMCacheList")
-		}
-		return printNIMCaches(nimCacheList, options.ioStreams.Out)
+	// Fallback to Ready if present (message may be empty)
+	if ready := apimeta.FindStatusCondition(conds, "Ready"); ready != nil {
+		return ready, nil
 	}
+	// Otherwise: first condition with a non-empty message
+	for i := range conds {
+		if conds[i].Message != "" {
+			return &conds[i], nil
+		}
+	}
+	if len(conds) > 0 {
+		// Last resort: return the first condition even if it has no message
+		return &conds[0], nil
+	}
+	return nil, fmt.Errorf("no conditions present")
+}
 
-	return err
+func MessageCondition(obj interface{}) (*v1.Condition, error) {
+	switch t := obj.(type) {
+	case *appsv1alpha1.NIMCache:
+		return messageConditionFrom(t.Status.Conditions)
+	case *appsv1alpha1.NIMService:
+		return messageConditionFrom(t.Status.Conditions)
+	default:
+		return nil, fmt.Errorf("unsupported type %T (want *NIMCache or *NIMService)", obj)
+	}
 }

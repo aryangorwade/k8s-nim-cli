@@ -3,10 +3,14 @@ package get
 import (
 	"fmt"
 	"strings"
+	"context"
 
 	"github.com/spf13/cobra"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	cmdutil "k8s.io/kubectl/pkg/cmd/util"
+	"k8s-nim-operator-cli/pkg/util"
+	appsv1alpha1 "github.com/NVIDIA/k8s-nim-operator/api/apps/v1alpha1"
+	"k8s-nim-operator-cli/pkg/util/client"
 )
 
 func NewGetCommand(cmdFactory cmdutil.Factory, streams genericclioptions.IOStreams) *cobra.Command {
@@ -28,4 +32,33 @@ func NewGetCommand(cmdFactory cmdutil.Factory, streams genericclioptions.IOStrea
 	cmd.AddCommand(NewGetNIMServiceCommand(cmdFactory, streams))
 	//cmd.AddCommand(NewGetNodesCommand(cmdFactory, streams))
 	return cmd
+}
+
+// Common Run command for get's custom resources.
+func Run(ctx context.Context, options *util.FetchResourceOptions, k8sClient client.Client, resourceListType interface{}) error {
+	resourceList, err := util.FetchResources(ctx, options, k8sClient, resourceListType)
+	if err != nil {
+		return err
+	}
+
+	switch resourceListType.(type) {
+
+	case appsv1alpha1.NIMServiceList:
+		// Cast resourceList to NIMServiceList.
+		nimServiceList, ok := resourceList.(*appsv1alpha1.NIMServiceList)
+		if !ok {
+			return fmt.Errorf("failed to cast resourceList to NIMServiceList")
+		}
+		return printNIMServices(nimServiceList, options.IoStreams.Out)
+
+	case appsv1alpha1.NIMCacheList:
+		// Cast resourceList to NIMCacheList.
+		nimCacheList, ok := resourceList.(*appsv1alpha1.NIMCacheList)
+		if !ok {
+			return fmt.Errorf("failed to cast resourceList to NIMCacheList")
+		}
+		return printNIMCaches(nimCacheList, options.IoStreams.Out)
+	}
+
+	return err
 }

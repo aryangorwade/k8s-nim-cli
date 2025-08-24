@@ -13,12 +13,13 @@ import (
 	cmdutil "k8s.io/kubectl/pkg/cmd/util"
 
 	"k8s-nim-operator-cli/pkg/util/client"
+	util "k8s-nim-operator-cli/pkg/util"
 
 	appsv1alpha1 "github.com/NVIDIA/k8s-nim-operator/api/apps/v1alpha1"
 )
 
 func NewStatusNIMServiceCommand(cmdFactory cmdutil.Factory, streams genericclioptions.IOStreams) *cobra.Command {
-	options := NewStatusResourceOptions(cmdFactory, streams)
+	options := util.NewFetchResourceOptions(cmdFactory, streams)
 
 	cmd := &cobra.Command{
 		Use:          "nimservice [NAME]",
@@ -36,10 +37,10 @@ func NewStatusNIMServiceCommand(cmdFactory cmdutil.Factory, streams genericcliop
 			if err != nil {
 				return fmt.Errorf("failed to create client: %w", err)
 			}
-			return options.Run(cmd.Context(), k8sClient, appsv1alpha1.NIMServiceList{})
+			return Run(cmd.Context(), options, k8sClient, appsv1alpha1.NIMServiceList{})
 		},
 	}
-	cmd.Flags().BoolVarP(&options.allNamespaces, "all-namespaces", "A", false, "If present, list the requested NIMService status across all namespaces. Namespace in current context is ignored even if specified with --namespace.")
+	cmd.Flags().BoolVarP(&options.AllNamespaces, "all-namespaces", "A", false, "If present, list the requested NIMService status across all namespaces. Namespace in current context is ignored even if specified with --namespace.")
 	return cmd
 }
 
@@ -65,7 +66,7 @@ func printNIMServices(nimServiceList *appsv1alpha1.NIMServiceList, output io.Wri
 			age = "<unknown>"
 		}
 
-		msgCond, err := MessageCondition(nimservice)
+		msgCond, err := util.MessageCondition(nimservice)
 
 		if err != nil {
 			return err

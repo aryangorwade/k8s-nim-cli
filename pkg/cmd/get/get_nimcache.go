@@ -11,13 +11,14 @@ import (
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"k8s.io/cli-runtime/pkg/printers"
 	cmdutil "k8s.io/kubectl/pkg/cmd/util"
+	util "k8s-nim-operator-cli/pkg/util"
 
 	"k8s-nim-operator-cli/pkg/util/client"
 	appsv1alpha1 "github.com/NVIDIA/k8s-nim-operator/api/apps/v1alpha1"
 )
 
 func NewGetNIMCacheCommand(cmdFactory cmdutil.Factory, streams genericclioptions.IOStreams) *cobra.Command {
-	options := NewGetResourceOptions(cmdFactory, streams)
+	options := util.NewFetchResourceOptions(cmdFactory, streams)
 
 	cmd := &cobra.Command{
 		Use:               "nimcache [NAME]",
@@ -35,10 +36,10 @@ func NewGetNIMCacheCommand(cmdFactory cmdutil.Factory, streams genericclioptions
 			if err != nil {
 				return fmt.Errorf("failed to create client: %w", err)
 			}
-			return options.Run(cmd.Context(), k8sClient, appsv1alpha1.NIMCacheList{})
+			return Run(cmd.Context(), options, k8sClient, appsv1alpha1.NIMCacheList{})
 		},
 	}
-	cmd.Flags().BoolVarP(&options.allNamespaces, "all-namespaces", "A", false, "If present, list the requested NIMCaches across all namespaces. Namespace in current context is ignored even if specified with --namespace.")
+	cmd.Flags().BoolVarP(&options.AllNamespaces, "all-namespaces", "A", false, "If present, list the requested NIMCaches across all namespaces. Namespace in current context is ignored even if specified with --namespace.")
 	return cmd
 }
 
