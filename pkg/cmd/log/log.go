@@ -8,7 +8,7 @@ import (
 	"k8s-nim-operator-cli/pkg/util"
 	"k8s-nim-operator-cli/pkg/util/client"
 
-	appsv1alpha1 "github.com/NVIDIA/k8s-nim-operator/api/apps/v1alpha1"
+	// appsv1alpha1 "github.com/NVIDIA/k8s-nim-operator/api/apps/v1alpha1"
 	"github.com/spf13/cobra"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	cmdutil "k8s.io/kubectl/pkg/cmd/util"
@@ -48,11 +48,12 @@ func NewLogCommand(cmdFactory cmdutil.Factory, streams genericclioptions.IOStrea
 }
 
 func Run(ctx context.Context, options *util.FetchResourceOptions, k8sClient client.Client) error {
+	/*
 	resourceList, err := util.FetchResources(ctx, options, k8sClient)
 	if err != nil {
 		return err
 	}
-
+	*/
 	switch options.ResourceType {
 
 	case util.NIMService:
@@ -78,5 +79,6 @@ func Run(ctx context.Context, options *util.FetchResourceOptions, k8sClient clie
 		return nil
 	}
 
-	return err
+	// return err
+	return nil
 }
