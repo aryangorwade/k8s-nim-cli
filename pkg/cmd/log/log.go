@@ -14,7 +14,7 @@ import (
 	cmdutil "k8s.io/kubectl/pkg/cmd/util"
 )
 
-func NewGetCommand(cmdFactory cmdutil.Factory, streams genericclioptions.IOStreams) *cobra.Command {
+func NewLogCommand(cmdFactory cmdutil.Factory, streams genericclioptions.IOStreams) *cobra.Command {
 	options := util.NewFetchResourceOptions(cmdFactory, streams)
 
 	cmd := &cobra.Command{
@@ -32,16 +32,16 @@ func NewGetCommand(cmdFactory cmdutil.Factory, streams genericclioptions.IOStrea
 				if err := options.CompleteNamespace(args, cmd); err != nil {
 					return err
 				}
-				// TODO: rewrite this to print out log or return error. currently incorrect.
 				// running cmd.Execute or cmd.ExecuteE sets the context, which will be done by root
 				k8sClient, err := client.NewClient(cmdFactory)
 				if err != nil {
 					return fmt.Errorf("failed to create client: %w", err)
 				}
-				return Run(cmd.Context(), options, k8sClient, appsv1alpha1.NIMServiceList{})	
+				return Run(cmd.Context(), options, k8sClient)	
 			default:
 				fmt.Println(fmt.Errorf("unknown command(s) %q", strings.Join(args, " ")))
 			}
+			return nil
 		},
 	}
 
@@ -50,15 +50,15 @@ func NewGetCommand(cmdFactory cmdutil.Factory, streams genericclioptions.IOStrea
 	return cmd
 }
 
-func Run(ctx context.Context, options *util.FetchResourceOptions, k8sClient client.Client, resourceListType interface{}) error {
-	resourceList, err := util.FetchResources(ctx, options, k8sClient, resourceListType)
+func Run(ctx context.Context, options *util.FetchResourceOptions, k8sClient client.Client) error {
+	resourceList, err := util.FetchResources(ctx, options, k8sClient)
 	if err != nil {
 		return err
 	}
 
-	switch resourceListType.(type) {
+	switch options.ResourceType {
 
-	case appsv1alpha1.NIMServiceList:
+	case util.NIMService:
 		// Cast resourceList to NIMServiceList.
 		nimServiceList, ok := resourceList.(*appsv1alpha1.NIMServiceList)
 		if !ok {
@@ -66,7 +66,7 @@ func Run(ctx context.Context, options *util.FetchResourceOptions, k8sClient clie
 		}
 		return printNIMServices(nimServiceList, options.IoStreams.Out)
 
-	case appsv1alpha1.NIMCacheList:
+	case util.NIMCache:
 		// Cast resourceList to NIMCacheList.
 		nimCacheList, ok := resourceList.(*appsv1alpha1.NIMCacheList)
 		if !ok {

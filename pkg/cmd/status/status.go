@@ -34,15 +34,15 @@ func NewStatusCommand(cmdFactory cmdutil.Factory, streams genericclioptions.IOSt
 }
 
 // Common Run command for status' custom resources.
-func Run (ctx context.Context, options *util.FetchResourceOptions, k8sClient client.Client, resourceListType interface{}) error {
-	resourceList, err := util.FetchResources(ctx, options, k8sClient, resourceListType)
+func Run (ctx context.Context, options *util.FetchResourceOptions, k8sClient client.Client) error {
+	resourceList, err := util.FetchResources(ctx, options, k8sClient)
 	if err != nil {
 		return err
 	}
 
-	switch resourceListType.(type) {
+	switch options.ResourceType {
 
-	case appsv1alpha1.NIMServiceList:
+	case util.NIMService:
 		// Cast resourceList to NIMServiceList.
 		nimServiceList, ok := resourceList.(*appsv1alpha1.NIMServiceList)
 		if !ok {
@@ -50,7 +50,7 @@ func Run (ctx context.Context, options *util.FetchResourceOptions, k8sClient cli
 		}
 		return printNIMServices(nimServiceList, options.IoStreams.Out)
 
-	case appsv1alpha1.NIMCacheList:
+	case util.NIMCache:
 		// Cast resourceList to NIMCacheList.
 		nimCacheList, ok := resourceList.(*appsv1alpha1.NIMCacheList)
 		if !ok {

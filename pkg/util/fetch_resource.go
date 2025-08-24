@@ -49,7 +49,7 @@ func (options *FetchResourceOptions) CompleteNamespace(args []string, cmd *cobra
 	if len(args) == 1 {
 		options.ResourceName = args[0]
 	}
-	// There would only be two arguments if log calls this (nim LOG NIMSERVICE META-LLAMA-3B).
+	// There would be exactly two arguments if log calls this (nim LOG NIMSERVICE META-LLAMA-3B).
 	if len(args) == 2 {
 		options.ResourceType = ResourceType(strings.ToLower(args[0]))
 		options.ResourceName = args[1]
@@ -58,18 +58,11 @@ func (options *FetchResourceOptions) CompleteNamespace(args []string, cmd *cobra
 	return nil
 }
 
-func FetchResources(ctx context.Context, options *FetchResourceOptions, k8sClient client.Client, resourceListType interface{}) (interface{}, error) {
+// Returns list of matching resources.
+func FetchResources(ctx context.Context, options *FetchResourceOptions, k8sClient client.Client) (interface{}, error) {
 	var resourceList interface{}
 	var err error
 
-	switch ltype := resourceListType.(type) {
-	case appsv1alpha1.NIMServiceList:
-		resourceList = ltype
-	case appsv1alpha1.NIMCacheList:
-		resourceList = ltype
-	default:
-		return nil, fmt.Errorf("unsupported resource type %T", ltype)
-	}
 
 	listopts := v1.ListOptions{}
 	if options.ResourceName != "" {
@@ -78,43 +71,24 @@ func FetchResources(ctx context.Context, options *FetchResourceOptions, k8sClien
 		}
 	}
 
-	if options.AllNamespaces {
-		// Determine type to populate list if no namespace specified.
-		switch resourceListType.(type) {
+	switch options.ResourceType {
 
-		case appsv1alpha1.NIMServiceList:
+	case NIMService:
+		resourceList = appsv1alpha1.NIMServiceList{}
+
+		// Retrieve NIMServices.
+		if options.AllNamespaces {
 			resourceList, err = k8sClient.NIMClient().AppsV1alpha1().NIMServices("").List(ctx, listopts)
 			if err != nil {
 				return nil, fmt.Errorf("unable to retrieve NIMServices for all namespaces: %w", err)
 			}
-
-		case appsv1alpha1.NIMCacheList:
-			resourceList, err = k8sClient.NIMClient().AppsV1alpha1().NIMCaches("").List(ctx, listopts)
-			if err != nil {
-				return nil, fmt.Errorf("unable to retrieve NIMCaches for all namespaces: %w", err)
-			}
-		}
-	} else {
-		// Determine type to populate list if namespace specified.
-		switch resourceListType.(type) {
-
-		case appsv1alpha1.NIMServiceList:
+		} else {
 			resourceList, err = k8sClient.NIMClient().AppsV1alpha1().NIMServices(options.namespace).List(ctx, listopts)
 			if err != nil {
 				return nil, fmt.Errorf("unable to retrieve NIMServices for namespace %s: %w", options.namespace, err)
 			}
-
-		case appsv1alpha1.NIMCacheList:
-			resourceList, err = k8sClient.NIMClient().AppsV1alpha1().NIMCaches(options.namespace).List(ctx, listopts)
-			if err != nil {
-				return nil, fmt.Errorf("unable to retrieve NIMCaches for namespace %s: %w", options.namespace, err)
-			}
 		}
-	}
 
-	switch resourceListType.(type) {
-
-	case appsv1alpha1.NIMServiceList:
 		// Cast resourceList to NIMServiceList.
 		nimServiceList, ok := resourceList.(*appsv1alpha1.NIMServiceList)
 		if !ok {
@@ -130,9 +104,23 @@ func FetchResources(ctx context.Context, options *FetchResourceOptions, k8sClien
 			}
 			return nil, errors.New(errMsg)
 		}
+		
+	case NIMCache:
+		resourceList = appsv1alpha1.NIMCacheList{}
 
-	case appsv1alpha1.NIMCacheList:
-		// Cast resourceList to NIMCacheList.
+		// Retrieve NIMCaches.
+		if options.AllNamespaces {
+			resourceList, err = k8sClient.NIMClient().AppsV1alpha1().NIMCaches("").List(ctx, listopts)
+			if err != nil {
+				return nil, fmt.Errorf("unable to retrieve NIMCaches for all namespaces: %w", err)
+			}
+		} else {
+			resourceList, err = k8sClient.NIMClient().AppsV1alpha1().NIMCaches(options.namespace).List(ctx, listopts)
+			if err != nil {
+				return nil, fmt.Errorf("unable to retrieve NIMCaches for namespace %s: %w", options.namespace, err)
+			}
+		}
+
 		nimCacheList, ok := resourceList.(*appsv1alpha1.NIMCacheList)
 		if !ok {
 			return nil, fmt.Errorf("failed to cast resourceList to NIMCacheList")
@@ -147,6 +135,7 @@ func FetchResources(ctx context.Context, options *FetchResourceOptions, k8sClien
 			}
 			return nil, errors.New(errMsg)
 		}
+
 	}
 
 	return resourceList, nil

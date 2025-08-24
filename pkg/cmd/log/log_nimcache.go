@@ -40,48 +40,33 @@ func NewLogNIMCacheCommand(cmdFactory cmdutil.Factory, streams genericclioptions
 			if err != nil {
 				return fmt.Errorf("failed to create client: %w", err)
 			}
-			return Run(cmd.Context(), options, k8sClient, appsv1alpha1.NIMCacheList{})
+			options.ResourceType = util.NIMCache
+			return Run(cmd.Context(), options, k8sClient)
 		},
 	}
 	cmd.Flags().BoolVarP(&options.AllNamespaces, "all-namespaces", "A", false, "If present, list the requested NIMCache's logs across all namespaces. Namespace in current context is ignored even if specified with --namespace.")
 	return cmd
 }
 
-func printNIMCaches(nimServiceList *appsv1alpha1.NIMServiceList, output io.Writer) error {
+func printNIMCaches(nimCacheList *appsv1alpha1.NIMCacheList, output io.Writer) error {
 	resultTablePrinter := printers.NewTablePrinter(printers.PrintOptions{})
 
 	resTable := &v1.Table{
 		ColumnDefinitions: []v1.TableColumnDefinition{
 			{Name: "Name", Type: "string"},
-			{Name: "Namespace", Type: "string"},
-			{Name: "Image", Type: "string"},
-			{Name: "Expose Service", Type: "string"},
-			{Name: "Replicas", Type: "int"},
-			{Name: "Scale", Type: "string"}, // if enabled, shows HPA maxReplicas / minReplicas
-			{Name: "Storage", Type: "string"}, // the kind and if pvc the pvc details
-			{Name: "Resources", Type: "string"}, // if any limits/resquests/claims shows them here
-			{Name: "State", Type: "string"},// only status
 			{Name: "Age", Type: "string"},
 		},
 	}
 
-	for _, nimservice := range nimServiceList.Items {
-		age := duration.HumanDuration(time.Since(nimservice.GetCreationTimestamp().Time))
-		if nimservice.GetCreationTimestamp().Time.IsZero() {
+	for _, nimcache := range nimCacheList.Items {
+		age := duration.HumanDuration(time.Since(nimcache.GetCreationTimestamp().Time))
+		if nimcache.GetCreationTimestamp().Time.IsZero() {
 			age = "<unknown>"
 		}
 
 		resTable.Rows = append(resTable.Rows, v1.TableRow{
 			Cells: []interface{}{
-				nimservice.GetName(),
-				nimservice.GetNamespace(), 
-				fmt.Sprintf("%s %s", nimservice.Spec.Image.Repository, nimservice.Spec.Image.Tag),
-				getExpose(&nimservice),
-				nimservice.Spec.Replicas,
-				getScale(&nimservice),
-				getStorage(&nimservice),
-				getNIMServiceResources(&nimservice),
-				nimservice.Status.State, 
+				nimcache.GetName(),
 				age,
 			},
 		})
