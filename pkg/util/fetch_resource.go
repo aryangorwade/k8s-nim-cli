@@ -8,10 +8,12 @@ import (
 	"bufio"
 	"sort"
 	"time"
+	"sync"
 
 	"github.com/spf13/cobra"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	corev1 "k8s.io/api/core/v1"
+	eventsv1 "k8s.io/api/events/v1"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	cmdutil "k8s.io/kubectl/pkg/cmd/util"
 
@@ -189,6 +191,8 @@ func MessageCondition(obj interface{}) (*v1.Condition, error) {
 	}
 }
 
+// This one streams one pod. 
+/*
 // streamResourceLogs lists pods by label selector in the given namespace and streams their logs.
 func StreamResourceLogs(ctx context.Context, options *FetchResourceOptions, k8sClient client.Client, namespace string, resourceName string, labelSelector string) error {
 	// List pods using the selector.
@@ -236,6 +240,77 @@ func StreamResourceLogs(ctx context.Context, options *FetchResourceOptions, k8sC
 	}
 	return nil
 }
+*/
+
+func StreamResourceLogs(ctx context.Context, options *FetchResourceOptions, k8sClient client.Client, namespace string, resourceName string, labelSelector string) error {
+	kube := k8sClient.KubernetesClient()
+	pods, err := kube.CoreV1().Pods(namespace).List(ctx, v1.ListOptions{LabelSelector: labelSelector})
+	if err != nil {
+		return fmt.Errorf("failed to list pods: %w", err)
+	}
+	if len(pods.Items) == 0 {
+		return fmt.Errorf("no pods found for %s/%s (selector=%q)", namespace, resourceName, labelSelector)
+	}
+
+	type logLine struct {
+		pod, container string
+		text           string
+	}
+	lines := make(chan logLine, 1024)
+
+	// Flags (replace with real flags)
+	follow := true
+	allContainers := true
+	targetContainer := ""
+	timestamps := false
+
+	var wg sync.WaitGroup
+	for _, pod := range pods.Items {
+		containers := pod.Spec.Containers
+		if !allContainers && targetContainer != "" {
+			containers = []corev1.Container{{Name: targetContainer}}
+		}
+		for _, c := range containers {
+			wg.Add(1)
+			podName, containerName := pod.Name, c.Name
+			go func() {
+				defer wg.Done()
+				req := kube.CoreV1().Pods(namespace).GetLogs(podName, &corev1.PodLogOptions{
+					Container:  containerName,
+					Follow:     follow,
+					Timestamps: timestamps,
+				})
+				rc, err := req.Stream(ctx)
+				if err != nil {
+					fmt.Fprintf(options.IoStreams.ErrOut, "error streaming %s/%s[%s]: %v\n", namespace, podName, containerName, err)
+					return
+				}
+				defer rc.Close()
+
+				sc := bufio.NewScanner(rc)
+				for sc.Scan() {
+					select {
+					case <-ctx.Done():
+						return
+					case lines <- logLine{pod: podName, container: containerName, text: sc.Text()}:
+					}
+				}
+			}()
+		}
+	}
+
+	// Close channel when all streams end
+	go func() {
+		wg.Wait()
+		close(lines)
+	}()
+
+	// Printer: interleaves lines as they arrive
+	for ln := range lines {
+		fmt.Fprintf(options.IoStreams.Out, "[%s/%s] %s\n", ln.pod, ln.container, ln.text)
+	}
+	return nil
+}
 
 // StreamResourceEvents lists pods by label selector and prints Kubernetes Events related to those pods.
 func StreamResourceEvents(ctx context.Context, options *FetchResourceOptions, k8sClient client.Client, namespace string, resourceName string, labelSelector string) error {
@@ -248,56 +323,208 @@ func StreamResourceEvents(ctx context.Context, options *FetchResourceOptions, k8
 		return fmt.Errorf("no pods found for %s/%s (selector=%q)", namespace, resourceName, labelSelector)
 	}
 
+	fmt.Fprintf(options.IoStreams.Out, "Watching events for %d pod(s) in %s matching %q...\n", len(pods.Items), namespace, labelSelector)
+
+	type line struct {
+		text string
+	}
+	lines := make(chan line, 1024)
+
+	var wg sync.WaitGroup
 	for _, pod := range pods.Items {
-		fs := fields.SelectorFromSet(fields.Set{
-			"involvedObject.kind": "Pod",
-			"involvedObject.name": pod.Name,
-		})
-		elist, err := kube.CoreV1().Events(namespace).List(ctx, v1.ListOptions{FieldSelector: fs.String()})
-		if err != nil {
-			fmt.Fprintf(options.IoStreams.ErrOut, "error listing events for pod %s/%s: %v\n", namespace, pod.Name, err)
-			continue
-		}
+		podName := pod.Name
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 
-		items := elist.Items
-		sort.Slice(items, func(i, j int) bool {
-			ti := items[i].EventTime.Time
-			if ti.IsZero() {
-				if !items[i].LastTimestamp.Time.IsZero() {
-					ti = items[i].LastTimestamp.Time
-				} else {
-					ti = items[i].FirstTimestamp.Time
-				}
-			}
-			tj := items[j].EventTime.Time
-			if tj.IsZero() {
-				if !items[j].LastTimestamp.Time.IsZero() {
-					tj = items[j].LastTimestamp.Time
-				} else {
-					tj = items[j].FirstTimestamp.Time
-				}
-			}
-			return ti.Before(tj)
-		})
+			// Prefer events.k8s.io/v1
+			ev1fs := fields.SelectorFromSet(fields.Set{
+				"regarding.kind": "Pod",
+				"regarding.name": podName,
+			})
 
-		prefix := fmt.Sprintf("[%s] ", pod.Name)
-		for _, ev := range items {
-			ts := ev.EventTime.Time
-			if ts.IsZero() {
-				if !ev.LastTimestamp.Time.IsZero() {
-					ts = ev.LastTimestamp.Time
-				} else {
-					ts = ev.FirstTimestamp.Time
+			// Attempt EventsV1 first
+			if elist, err := kube.EventsV1().Events(namespace).List(ctx, v1.ListOptions{FieldSelector: ev1fs.String()}); err == nil {
+				items := elist.Items
+				sort.Slice(items, func(i, j int) bool {
+					ti := items[i].EventTime.Time
+					if ti.IsZero() && items[i].Series != nil && !items[i].Series.LastObservedTime.Time.IsZero() {
+						ti = items[i].Series.LastObservedTime.Time
+					}
+					tj := items[j].EventTime.Time
+					if tj.IsZero() && items[j].Series != nil && !items[j].Series.LastObservedTime.Time.IsZero() {
+						tj = items[j].Series.LastObservedTime.Time
+					}
+					return ti.Before(tj)
+				})
+				for _, ev := range items {
+					ts := ev.EventTime.Time
+					if ts.IsZero() && ev.Series != nil && !ev.Series.LastObservedTime.Time.IsZero() {
+						ts = ev.Series.LastObservedTime.Time
+					}
+					tsStr := ts.Format(time.RFC3339)
+					src := ev.ReportingController
+					if src == "" {
+						src = "kubelet"
+					}
+					select {
+					case <-ctx.Done():
+						return
+					case lines <- line{text: fmt.Sprintf("[%s] %s %s %s %s: %s", podName, tsStr, ev.Type, ev.Reason, src, ev.Note)}:
+					}
+				}
+
+				w, err := kube.EventsV1().Events(namespace).Watch(ctx, v1.ListOptions{
+					FieldSelector:       ev1fs.String(),
+					ResourceVersion:     elist.ResourceVersion,
+					AllowWatchBookmarks: true,
+					Watch:               true,
+				})
+				if err != nil {
+					fmt.Fprintf(options.IoStreams.ErrOut, "error watching v1 events for pod %s/%s: %v\n", namespace, podName, err)
+					return
+				}
+				defer w.Stop()
+
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case evt, ok := <-w.ResultChan():
+						if !ok {
+							return
+						}
+						ev, ok := evt.Object.(*eventsv1.Event)
+						if !ok || ev == nil {
+							continue
+						}
+						ts := ev.EventTime.Time
+						if ts.IsZero() && ev.Series != nil && !ev.Series.LastObservedTime.Time.IsZero() {
+							ts = ev.Series.LastObservedTime.Time
+						}
+						tsStr := ts.Format(time.RFC3339)
+						src := ev.ReportingController
+						if src == "" {
+							src = "kubelet"
+						}
+						select {
+						case <-ctx.Done():
+							return
+						case lines <- line{text: fmt.Sprintf("[%s] %s %s %s %s: %s", podName, tsStr, ev.Type, ev.Reason, src, ev.Note)}:
+						}
+					}
 				}
 			}
-			tsStr := ts.Format(time.RFC3339)
-			src := ev.Source.Component
-			if src == "" {
-				src = "kubelet"
+
+			// Fallback to core/v1 events if EventsV1 list errored
+			fs := fields.SelectorFromSet(fields.Set{
+				"involvedObject.kind": "Pod",
+				"involvedObject.name": podName,
+			})
+
+			elist, err := kube.CoreV1().Events(namespace).List(ctx, v1.ListOptions{FieldSelector: fs.String()})
+			if err != nil {
+				fmt.Fprintf(options.IoStreams.ErrOut, "error listing core/v1 events for pod %s/%s: %v\n", namespace, podName, err)
+				return
 			}
-			fmt.Fprintf(options.IoStreams.Out, "%s%s %s %s %s: %s\n", prefix, tsStr, ev.Type, ev.Reason, src, ev.Message)
-		}
+
+			items := elist.Items
+			sort.Slice(items, func(i, j int) bool {
+				ti := items[i].EventTime.Time
+				if ti.IsZero() {
+					if !items[i].LastTimestamp.Time.IsZero() {
+						ti = items[i].LastTimestamp.Time
+					} else {
+						ti = items[i].FirstTimestamp.Time
+					}
+				}
+				tj := items[j].EventTime.Time
+				if tj.IsZero() {
+					if !items[j].LastTimestamp.Time.IsZero() {
+						tj = items[j].LastTimestamp.Time
+					} else {
+						tj = items[j].FirstTimestamp.Time
+					}
+				}
+				return ti.Before(tj)
+			})
+			for _, ev := range items {
+				ts := ev.EventTime.Time
+				if ts.IsZero() {
+					if !ev.LastTimestamp.Time.IsZero() {
+						ts = ev.LastTimestamp.Time
+					} else {
+						ts = ev.FirstTimestamp.Time
+					}
+				}
+				tsStr := ts.Format(time.RFC3339)
+				src := ev.Source.Component
+				if src == "" {
+					src = "kubelet"
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case lines <- line{text: fmt.Sprintf("[%s] %s %s %s %s: %s", podName, tsStr, ev.Type, ev.Reason, src, ev.Message)}:
+				}
+			}
+
+			w, err := kube.CoreV1().Events(namespace).Watch(ctx, v1.ListOptions{
+				FieldSelector:       fs.String(),
+				ResourceVersion:     elist.ResourceVersion,
+				AllowWatchBookmarks: true,
+				Watch:               true,
+			})
+			if err != nil {
+				fmt.Fprintf(options.IoStreams.ErrOut, "error watching core/v1 events for pod %s/%s: %v\n", namespace, podName, err)
+				return
+			}
+			defer w.Stop()
+
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case evt, ok := <-w.ResultChan():
+					if !ok {
+						return
+					}
+					ev, ok := evt.Object.(*corev1.Event)
+					if !ok || ev == nil {
+						continue
+					}
+					ts := ev.EventTime.Time
+					if ts.IsZero() {
+						if !ev.LastTimestamp.Time.IsZero() {
+							ts = ev.LastTimestamp.Time
+						} else {
+							ts = ev.FirstTimestamp.Time
+						}
+					}
+					tsStr := ts.Format(time.RFC3339)
+					src := ev.Source.Component
+					if src == "" {
+						src = "kubelet"
+					}
+					select {
+					case <-ctx.Done():
+						return
+					case lines <- line{text: fmt.Sprintf("[%s] %s %s %s %s: %s", podName, tsStr, ev.Type, ev.Reason, src, ev.Message)}:
+					}
+				}
+			}
+		}()
 	}
 
+	// Close the shared channel when all goroutines complete
+	go func() {
+		wg.Wait()
+		close(lines)
+	}()
+
+	// Interleave output from all pods as it arrives
+	for ln := range lines {
+		fmt.Fprintln(options.IoStreams.Out, ln.text)
+	}
 	return nil
 }
