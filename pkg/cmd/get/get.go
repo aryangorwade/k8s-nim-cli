@@ -16,8 +16,8 @@ import (
 func NewGetCommand(cmdFactory cmdutil.Factory, streams genericclioptions.IOStreams) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:          "get",
-		Short:        "Display one or many NIM Operator custom resources.",
-		Long:         `Prints a table of the most important information about the specified NIM Operator resources.`,
+		Short:        "Display one or many NIM Operator custom resources",
+		Long:         `Prints a table of the most important information about the specified NIM Operator resources`,
 		Aliases:      []string{"list"},
 		SilenceUsage: true,
 		Run: func(cmd *cobra.Command, args []string) {

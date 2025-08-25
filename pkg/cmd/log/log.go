@@ -9,6 +9,7 @@ import (
 	"k8s-nim-operator-cli/pkg/util/client"
 
 	// appsv1alpha1 "github.com/NVIDIA/k8s-nim-operator/api/apps/v1alpha1"
+	appsv1alpha1 "github.com/NVIDIA/k8s-nim-operator/api/apps/v1alpha1"
 	"github.com/spf13/cobra"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	cmdutil "k8s.io/kubectl/pkg/cmd/util"
@@ -18,21 +19,11 @@ func NewLogCommand(cmdFactory cmdutil.Factory, streams genericclioptions.IOStrea
 	options := util.NewFetchResourceOptions(cmdFactory, streams)
 
 	cmd := &cobra.Command{
-		Use:          "log RESOURCE NAME",
-		Short:        "Display the logs of a specified NIM Operator custom resource.",
-		Long: 
-		`Display logs for NIM Operator custom resources.
-
-		Supported RESOURCE types:
-		  - nimcache
-		  - nimservice
-		
-		Examples:
-		  # Show logs for a NIMCache resource named "my-cache"
-		  mycli log nimcache my-cache
-		
-		  # Show logs for a NIMService resource named "my-service"
-		  mycli log nimservice my-service`,
+		Use:   "log RESOURCE NAME",
+		Short: "Stream custom resource logs",
+		Long:  "Stream the logs of a specified NIM Operator custom resource",
+		Example: `  mycli log nimcache my-cache
+  mycli log nimservice my-service`,
 		Aliases:      []string{"logs"},
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -45,54 +36,95 @@ func NewLogCommand(cmdFactory cmdutil.Factory, streams genericclioptions.IOStrea
 				if err := options.CompleteNamespace(args, cmd); err != nil {
 					return err
 				}
-				// running cmd.Execute or cmd.ExecuteE sets the context, which will be done by root
 				k8sClient, err := client.NewClient(cmdFactory)
 				if err != nil {
 					return fmt.Errorf("failed to create client: %w", err)
 				}
-				return Run(cmd.Context(), options, k8sClient)	
+				return Run(cmd.Context(), options, k8sClient)
 			default:
 				fmt.Println(fmt.Errorf("unknown command(s) %q", strings.Join(args, " ")))
 			}
 			return nil
 		},
 	}
-	
+
+	cmd.SetHelpTemplate(helpTemplate)
+	cmd.Flags().BoolVar(&options.Events, "events", false, "Show Kubernetes events for the selected pods instead of container logs")
+
 	return cmd
 }
 
 func Run(ctx context.Context, options *util.FetchResourceOptions, k8sClient client.Client) error {
-	/*
 	resourceList, err := util.FetchResources(ctx, options, k8sClient)
 	if err != nil {
 		return err
 	}
-	*/
+
+	var (
+		ns       = options.Namespace
+		name     = options.ResourceName
+		selector string
+	)
+
+	// Get the selector.
 	switch options.ResourceType {
 
 	case util.NIMService:
-		// Cast resourceList to NIMServiceList.
-		/*
-		nimServiceList, ok := resourceList.(*appsv1alpha1.NIMServiceList)
-		if !ok {
-			return fmt.Errorf("failed to cast resourceList to NIMServiceList")
+		nl, ok := resourceList.(*appsv1alpha1.NIMServiceList)
+		if !ok || len(nl.Items) == 0 {
+			return fmt.Errorf("NIMService %q not found", name)
 		}
-		return printNIMServices(nimServiceList, options.IoStreams.Out)
-		*/ 
-		return nil
+		ns = nl.Items[0].Namespace
+
+		if selector == "" {
+			selector = fmt.Sprintf("app.kubernetes.io/instance=%s", name)
+		}
 
 	case util.NIMCache:
-		/*
-		// Cast resourceList to NIMCacheList.
-		nimCacheList, ok := resourceList.(*appsv1alpha1.NIMCacheList)
-		if !ok {
-			return fmt.Errorf("failed to cast resourceList to NIMCacheList")
+		cl, ok := resourceList.(*appsv1alpha1.NIMCacheList)
+		if !ok || len(cl.Items) == 0 {
+			return fmt.Errorf("NIMCache %q not found", name)
 		}
-		return printNIMCaches(nimCacheList, options.IoStreams.Out)
-		*/ 
-		return nil
+		ns = cl.Items[0].Namespace
+
+		// Same selector logic as above
+		if selector == "" {
+			selector = fmt.Sprintf("app.kubernetes.io/instance=%s", name)
+		}
 	}
 
-	// return err
-	return nil
+	if options.Events {
+		return util.StreamResourceEvents(ctx, options, k8sClient, ns, name, selector)
+	}
+	return util.StreamResourceLogs(ctx, options, k8sClient, ns, name, selector)
 }
+
+// Custom help message template. Needed to show supported resource types as a custom category to be consistent with "Available Commands" for get and status.
+const helpTemplate = `{{- if .Long }}{{ .Long }}{{- else }}{{ .Short }}{{- end }}
+
+Usage:{{if .Runnable}}
+  {{.UseLine}}{{end}}
+
+{{if gt (len .Aliases) 0}}Aliases:
+  {{.NameAndAliases}}
+
+Supported RESOURCE types:
+  nimcache     Get NIMCache logs.
+  nimservice   Get NIMService logs.
+
+{{end}}{{if .HasExample}}Examples:
+{{ .Example }}
+
+{{end}}{{if .HasAvailableLocalFlags}}Flags:
+{{.LocalFlags.FlagUsages | trimTrailingWhitespaces}}
+
+{{end}}{{if .HasAvailableInheritedFlags}}Global Flags:
+{{.InheritedFlags.FlagUsages | trimTrailingWhitespaces}}
+
+{{end}}{{if .HasHelpSubCommands}}Additional help topics:{{range .Commands}}{{if .IsAdditionalHelpTopicCommand}}
+  {{.CommandPath}} {{.Short}}{{end}}{{end}}
+
+{{end}}{{if .HasAvailableSubCommands}}Available Commands:{{range .Commands}}{{if (and .IsAvailableCommand (not .IsAdditionalHelpTopicCommand))}}
+  {{rpad .Name .NamePadding }} {{.Short}}{{end}}{{end}}
+
+{{end}}`
