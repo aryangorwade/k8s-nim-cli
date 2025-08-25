@@ -36,6 +36,18 @@ func NewDeleteCommand(cmdFactory cmdutil.Factory, streams genericclioptions.IOSt
 				if err := options.CompleteNamespace(args, cmd); err != nil {
 					return err
 				}
+				// Parse resource type and name from args
+				resource := strings.ToLower(args[0])
+				name := args[1]
+				switch resource {
+				case "nimservice", "nimservices":
+					options.ResourceType = util.NIMService
+				case "nimcache", "nimcaches":
+					options.ResourceType = util.NIMCache
+				default:
+					return fmt.Errorf("unsupported resource type %q", resource)
+				}
+				options.ResourceName = name
 				k8sClient, err := client.NewClient(cmdFactory)
 				if err != nil {
 					return fmt.Errorf("failed to create client: %w", err)
@@ -107,7 +119,7 @@ Usage:{{if .Runnable}}
 
 Supported RESOURCE types:
   nimcache     Delete a NIMCache deployment.
-  nimservice   Get a NIMService deployment.
+  nimservice   Delete a NIMService deployment.
 
 {{end}}{{if .HasExample}}Examples:
 {{ .Example }}

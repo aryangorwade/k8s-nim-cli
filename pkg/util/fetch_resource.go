@@ -1,19 +1,19 @@
 package util
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
-	"strings"
-	"bufio"
 	"sort"
-	"time"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/spf13/cobra"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	corev1 "k8s.io/api/core/v1"
 	eventsv1 "k8s.io/api/events/v1"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	cmdutil "k8s.io/kubectl/pkg/cmd/util"
 
@@ -32,7 +32,7 @@ type FetchResourceOptions struct {
 	ResourceName  string
 	ResourceType  ResourceType
 	AllNamespaces bool
-	Events 		  bool
+	Events        bool
 }
 
 func NewFetchResourceOptions(cmdFactory cmdutil.Factory, streams genericclioptions.IOStreams) *FetchResourceOptions {
@@ -54,11 +54,12 @@ func (options *FetchResourceOptions) CompleteNamespace(args []string, cmd *cobra
 	}
 
 	// When get and status call this, there will only ever be one argument at most (nim get NIMSERVICE NAME or nim get NIMSERVICES).
+	// When logs calls this command, ResourceName will immediately be overwritten by a blank string.
 	if len(args) == 1 {
 		options.ResourceName = args[0]
 	}
-	// There would be exactly two arguments if log calls this (nim LOG NIMSERVICE META-LLAMA-3B).
-	if len(args) == 2 {	
+	// There would be exactly two arguments if delete calls this (nim DELETE NIMSERVICE META-LLAMA-3B).
+	if len(args) == 2 {
 		resourceType := ResourceType(strings.ToLower(args[0]))
 
 		// Validating ResourceType.
@@ -67,7 +68,7 @@ func (options *FetchResourceOptions) CompleteNamespace(args []string, cmd *cobra
 			options.ResourceType = resourceType
 		default:
 			return fmt.Errorf("invalid resource type %q. Valid types are: nimservice, nimcache", args[0])
-		}	
+		}
 
 		options.ResourceName = args[1]
 	}
@@ -79,7 +80,6 @@ func (options *FetchResourceOptions) CompleteNamespace(args []string, cmd *cobra
 func FetchResources(ctx context.Context, options *FetchResourceOptions, k8sClient client.Client) (interface{}, error) {
 	var resourceList interface{}
 	var err error
-
 
 	listopts := v1.ListOptions{}
 	if options.ResourceName != "" {
@@ -121,7 +121,7 @@ func FetchResources(ctx context.Context, options *FetchResourceOptions, k8sClien
 			}
 			return nil, errors.New(errMsg)
 		}
-		
+
 	case NIMCache:
 		resourceList = appsv1alpha1.NIMCacheList{}
 
@@ -191,57 +191,7 @@ func MessageCondition(obj interface{}) (*v1.Condition, error) {
 	}
 }
 
-// This one streams one pod. 
-/*
-// streamResourceLogs lists pods by label selector in the given namespace and streams their logs.
-func StreamResourceLogs(ctx context.Context, options *FetchResourceOptions, k8sClient client.Client, namespace string, resourceName string, labelSelector string) error {
-	// List pods using the selector.
-	kube := k8sClient.KubernetesClient()
-	pods, err := kube.CoreV1().Pods(namespace).List(ctx, v1.ListOptions{LabelSelector: labelSelector})
-	if err != nil {
-		return fmt.Errorf("failed to list pods: %w", err)
-	}
-	if len(pods.Items) == 0 {
-		return fmt.Errorf("no pods found for %s/%s (selector=%q)", namespace, resourceName, labelSelector)
-	}
-
-	// Stream the pod logs.
-	// Replace these with flags if desired:
-	follow := true        // e.g., from --follow
-	allContainers := true // e.g., from --all-containers
-	container := ""       // e.g., from --container
-
-	for _, pod := range pods.Items {
-		containers := pod.Spec.Containers
-		if !allContainers && container != "" {
-			containers = []corev1.Container{{Name: container}}
-		}
-
-		for _, c := range containers {
-			req := kube.CoreV1().Pods(namespace).GetLogs(pod.Name, &corev1.PodLogOptions{
-				Container:  c.Name,
-				Follow:     follow,
-				Timestamps: true,
-			})
-			rc, err := req.Stream(ctx)
-			if err != nil {
-				// Continue on next container/pod to be robust.
-				fmt.Fprintf(options.IoStreams.ErrOut, "error streaming %s/%s[%s]: %v\n", namespace, pod.Name, c.Name, err)
-				continue
-			}
-			// Optional: prefix lines with pod/container
-			prefix := fmt.Sprintf("[%s/%s] ", pod.Name, c.Name)
-			sc := bufio.NewScanner(rc)
-			for sc.Scan() {
-				fmt.Fprintln(options.IoStreams.Out, prefix+sc.Text())
-			}
-			rc.Close()
-		}
-	}
-	return nil
-}
-*/
-
+// Streams logs from all pods as they come.
 func StreamResourceLogs(ctx context.Context, options *FetchResourceOptions, k8sClient client.Client, namespace string, resourceName string, labelSelector string) error {
 	kube := k8sClient.KubernetesClient()
 	pods, err := kube.CoreV1().Pods(namespace).List(ctx, v1.ListOptions{LabelSelector: labelSelector})
@@ -312,7 +262,7 @@ func StreamResourceLogs(ctx context.Context, options *FetchResourceOptions, k8sC
 	return nil
 }
 
-// StreamResourceEvents lists pods by label selector and prints Kubernetes Events related to those pods.
+// StreamResourceEvents lists pods by label selector and prints Kubernetes Events related to those pods as they come.
 func StreamResourceEvents(ctx context.Context, options *FetchResourceOptions, k8sClient client.Client, namespace string, resourceName string, labelSelector string) error {
 	kube := k8sClient.KubernetesClient()
 	pods, err := kube.CoreV1().Pods(namespace).List(ctx, v1.ListOptions{LabelSelector: labelSelector})
