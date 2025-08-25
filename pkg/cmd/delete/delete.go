@@ -1,4 +1,4 @@
-package log
+package delete
 
 import (
 	"context"
@@ -9,22 +9,23 @@ import (
 	"k8s-nim-operator-cli/pkg/util/client"
 
 	appsv1alpha1 "github.com/NVIDIA/k8s-nim-operator/api/apps/v1alpha1"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"github.com/spf13/cobra"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	cmdutil "k8s.io/kubectl/pkg/cmd/util"
 )
 
-func NewLogCommand(cmdFactory cmdutil.Factory, streams genericclioptions.IOStreams) *cobra.Command {
+func NewDeleteCommand(cmdFactory cmdutil.Factory, streams genericclioptions.IOStreams) *cobra.Command {
 	options := util.NewFetchResourceOptions(cmdFactory, streams)
 
 	cmd := &cobra.Command{
-		Use:   "log RESOURCE NAME",
-		Short: "Stream custom resource logs",
-		Long:  "Stream the logs of a specified NIM Operator custom resource",
-		Example: `  nim log nimcache my-cache
-  nim log nimservice my-service`,
-		Aliases:      []string{"logs"},
-		SilenceUsage: true,
+		Use:   "delete RESOURCE NAME",
+		Short: "Delete custom resources deployment",
+		Long:  "Delete a NIM Operator custom resource's deployment",
+		Example: `  nim delete nimcache my-cache
+  nim delete nimservice my-service`,
+		Aliases:      []string{"remove"},                             
+		SilenceUsage: true,                                              
 		RunE: func(cmd *cobra.Command, args []string) error {
 			switch len(args) {
 			case 0:
@@ -48,7 +49,6 @@ func NewLogCommand(cmdFactory cmdutil.Factory, streams genericclioptions.IOStrea
 	}
 
 	cmd.SetHelpTemplate(helpTemplate)
-	cmd.Flags().BoolVar(&options.Events, "events", false, "Show Kubernetes events for the selected pods instead of container logs")
 
 	return cmd
 }
@@ -60,14 +60,11 @@ func Run(ctx context.Context, options *util.FetchResourceOptions, k8sClient clie
 	}
 
 	var (
-		ns       = options.Namespace
-		name     = options.ResourceName
-		selector string
+		ns   = options.Namespace
+		name = options.ResourceName
 	)
 
-	// Get the selector.
 	switch options.ResourceType {
-
 	case util.NIMService:
 		nl, ok := resourceList.(*appsv1alpha1.NIMServiceList)
 		if !ok || len(nl.Items) == 0 {
@@ -75,9 +72,10 @@ func Run(ctx context.Context, options *util.FetchResourceOptions, k8sClient clie
 		}
 		ns = nl.Items[0].Namespace
 
-		if selector == "" {
-			selector = fmt.Sprintf("app.kubernetes.io/instance=%s", name)
+		if err := k8sClient.NIMClient().AppsV1alpha1().NIMServices(ns).Delete(ctx, name, v1.DeleteOptions{}); err != nil {
+			return fmt.Errorf("failed to delete NIMService %s/%s: %w", ns, name, err)
 		}
+		fmt.Fprintf(options.IoStreams.Out, "NIMService %q deleted in namespace %q\n", name, ns)
 
 	case util.NIMCache:
 		cl, ok := resourceList.(*appsv1alpha1.NIMCacheList)
@@ -86,16 +84,16 @@ func Run(ctx context.Context, options *util.FetchResourceOptions, k8sClient clie
 		}
 		ns = cl.Items[0].Namespace
 
-		// Same selector logic as above
-		if selector == "" {
-			selector = fmt.Sprintf("app.kubernetes.io/instance=%s", name)
+		if err := k8sClient.NIMClient().AppsV1alpha1().NIMCaches(ns).Delete(ctx, name, v1.DeleteOptions{}); err != nil {
+			return fmt.Errorf("failed to delete NIMCache %s/%s: %w", ns, name, err)
 		}
+		fmt.Fprintf(options.IoStreams.Out, "NIMCache %q deleted in namespace %q\n", name, ns)
+
+	default:
+		return fmt.Errorf("unsupported resource type %q", options.ResourceType)
 	}
 
-	if options.Events {
-		return util.StreamResourceEvents(ctx, options, k8sClient, ns, name, selector)
-	}
-	return util.StreamResourceLogs(ctx, options, k8sClient, ns, name, selector)
+	return nil
 }
 
 // Custom help message template. Needed to show supported resource types as a custom category to be consistent with "Available Commands" for get and status.
@@ -108,8 +106,8 @@ Usage:{{if .Runnable}}
   {{.NameAndAliases}}
 
 Supported RESOURCE types:
-  nimcache     Get NIMCache logs.
-  nimservice   Get NIMService logs.
+  nimcache     Delete a NIMCache deployment.
+  nimservice   Get a NIMService deployment.
 
 {{end}}{{if .HasExample}}Examples:
 {{ .Example }}

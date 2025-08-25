@@ -67,7 +67,7 @@ func printNIMServices(nimServiceList *appsv1alpha1.NIMServiceList, output io.Wri
 			age = "<unknown>"
 		}
 
-		msgCond, err := util.MessageCondition(nimservice)
+		msgCond, err := util.MessageCondition(&nimservice)
 
 		if err != nil {
 			return err
