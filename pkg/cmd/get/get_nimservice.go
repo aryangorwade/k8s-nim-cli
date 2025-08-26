@@ -3,7 +3,6 @@ package get
 import (
 	"fmt"
 	"io"
-	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -145,24 +144,21 @@ func getStorage(nimService *appsv1alpha1.NIMService) string {
 	return fmt.Sprintf("HostPath: %s", *nimService.Spec.Storage.HostPath)
 }
 
-func getNIMServiceResources(nimService *appsv1alpha1.NIMService) string {
-	result := ""
-	if !reflect.DeepEqual(nimService.Spec.Resources, corev1.ResourceRequirements{}) {
-		// Pretty print limits.
-		if len(nimService.Spec.Resources.Limits) != 0 {
-			result += fmt.Sprintf("Limits: %s", resourceListToOneLine(nimService.Spec.Resources.Limits))
-		}
-		// Pretty print requests.
-		if len(nimService.Spec.Resources.Requests) != 0 {
-			result += fmt.Sprintf("\nRequests: %s", resourceListToOneLine(nimService.Spec.Resources.Requests))
-		}
-		// Pretty print claims.
-		if len(nimService.Spec.Resources.Claims) != 0 {
-			result += fmt.Sprintf("\nClaims: %s", claimsToOneLine(nimService.Spec.Resources.Claims))
-		}
+func getNIMServiceResources(n *appsv1alpha1.NIMService) string {
+	if n.Spec.Resources == nil {
+		return ""
 	}
-
-	return ""
+	var out []string
+	if len(n.Spec.Resources.Limits) > 0 {
+		out = append(out, fmt.Sprintf("Limits: %s", resourceListToOneLine(n.Spec.Resources.Limits)))
+	}
+	if len(n.Spec.Resources.Requests) > 0 {
+		out = append(out, fmt.Sprintf("Requests: %s", resourceListToOneLine(n.Spec.Resources.Requests)))
+	}
+	if len(n.Spec.Resources.Claims) > 0 {
+		out = append(out, fmt.Sprintf("Claims: %s", claimsToOneLine(n.Spec.Resources.Claims)))
+	}
+	return strings.Join(out, "\n")
 }
 
 func resourceListToOneLine(rl corev1.ResourceList) string {
