@@ -28,7 +28,7 @@ func NewLogCommand(cmdFactory cmdutil.Factory, streams genericclioptions.IOStrea
 	cmd := &cobra.Command{
 		Use:   "logs COMMAND",
 		Short: "Get custom resource logs in a namespace",
-		Long:  "Get the logs of all NIM Operator custom resource in a namespace",
+		Long:  "Gather the logs of all NIM Operator CRs in a namespace and create a diagnostic bundle",
 		Example: `  nim logs collect
   nim logs collect -n nim-service`,
 		Aliases:      []string{"log"},
@@ -166,7 +166,7 @@ Usage:{{if .Runnable}}
 {{if gt (len .Aliases) 0}}Aliases:
   {{.NameAndAliases}}
 
-Supported COMMANDs:
+Supported COMMANDS:
   collect     Collect logs of all NIM Operator custom resources in a namespace and write them out to a diagnostic bundle.
 
 {{end}}{{if .HasExample}}Examples:

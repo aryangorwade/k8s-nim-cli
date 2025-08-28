@@ -88,22 +88,16 @@ func NewDeployNIMCacheCommand(cmdFactory cmdutil.Factory, streams genericcliopti
 	cmd := &cobra.Command{
 		Use: "nimcache [NAME]",
 		Short: `Deploy new NIMCache with specified information.
+
 Minimum required flags are --nim-source (and those required for that specific nim-source) and storage: reference an existing/create new PVC.
+  For --nim-source=ngc, minimum required flags are model-puller, auth-secret.
+  For --nim-source=huggingface/nemodatastore, minumum required flags are alt-endpoint, alt-namespace, auth-secret, model-puller, pull-secret.
 
-auth-secret defaults to 'ngc-api-secret.' If using a different auth-secret, must specify it. The instructions below assume that.
-For --nim-source=ngc, minimum required flags are model-puller, auth-secret.
-For --nim-source=huggingface/nemodatastore, minumum required flags are alt-endpoint, alt-namespace, auth-secret, model-puller, pull-secret.
-
-If using existing PVC, minimum required flags are pvc-storage-name.
-If creating new PVC, minimum required flags are pvc-create, pvc-size, pvc-volume-access-mode, pvc-storage-class.`,
+  If using existing PVC, minimum required flags are pvc-storage-name.
+  If creating new PVC, minimum required flags are pvc-create, pvc-size, pvc-volume-access-mode, pvc-storage-class.`,
 		SilenceUsage: true,
 		// ValidArgsFunction: completion.RayClusterCompletionFunc(cmdFactory),
 		Args: cobra.MaximumNArgs(1),
-		// TODO: Complete
-		Example: `	Deploying NIMCache with source as NGC with an existing PVC as storage.
-		kl nim deploy nimcache my-nimcache --nim-source=ngc --model-puller=nvcr.io/nim/meta/llama-3.1-8b-instruct:1.3.3 --pull-secret=ngc-secret --auth-secret=ngc-api-secret --engine=tensorrt_llm --tensor-parallelism=1 --pvc-storage-name=nim-pvc
-	Deploying NIMCache with source as HuggingFace while creating new PVC. Is similar in structure to deploying one with NeMo DataStore instead. 
-		kl nim deploy nimcache my-nimcache  --alt-endpoint=<hf-endpoint> --alt-namespace=main --auth-secret=<hf-secret> model-puller=<model-puller> --pull-secret=<hf-pullsecret> --pvc-create=true --pvc-size=20Gi --pvc-volume-access-mode=ReadWriteMany --pvc-storage-class=<storage-class-name>`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				cmd.HelpFunc()(cmd, args)
@@ -125,6 +119,17 @@ If creating new PVC, minimum required flags are pvc-create, pvc-size, pvc-volume
 			}
 		},
 	}
+
+	cmd.Example = strings.Join([]string{
+		"  Deploying NIMService with existing PVC as storage.",
+		"    kl nim deploy nimservice llama3-nimservice --image-repository=nvcr.io/nim/meta/llama-3.1-8b-instruct --tag=1.3.3 --pvc-storage-name=nim-pvc",
+		"",
+		"  Deploying NIMService without existing PVC as storage.",
+		"    kl nim deploy nimservice llama3-nimservice --image-repository=nvcr.io/nim/meta/llama-3.1-8b-instruct --tag=1.3.3 --pvc-create=true --pvc-size=20Gi --pvc-volume-access-mode=ReadWriteMany --pvc-storage-class=<storage-class-name>",
+		"",
+		"  Deploying NIMService with existing NIMCache as storage.",
+		"    kl nim deploy nimservice llama3-nimservice --image-repository=nvcr.io/nim/meta/llama-3.1-8b-instruct --tag=1.3.3 --nimcache-storage-name=<nimcache-name>",
+	  }, "\n")
 
 	// The first argument will be name. Other arguments will be specified as flags.
 	cmd.Flags().StringVar(&options.SourceConfiguration, "nim-source", util.SourceConfiguration, "The NIM model source to cache. Must be one of 'ngc', 'huggingface', 'nemodatastore'.")

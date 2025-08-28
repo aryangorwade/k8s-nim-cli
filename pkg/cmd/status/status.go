@@ -17,7 +17,7 @@ func NewStatusCommand(cmdFactory cmdutil.Factory, streams genericclioptions.IOSt
 	cmd := &cobra.Command{
 		Use:          "status",
 		Short:        "Describe the status of a NIM Operator custom resource",
-		Long:         `Prints a table about the status of the specified NIM Operator resource`,
+		Long:         `Prints a table about the status of one or many specified NIM Operator resources`,
 		Aliases:      []string{},
 		SilenceUsage: true,
 		Run: func(cmd *cobra.Command, args []string) {

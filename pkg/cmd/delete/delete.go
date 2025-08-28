@@ -19,8 +19,8 @@ func NewDeleteCommand(cmdFactory cmdutil.Factory, streams genericclioptions.IOSt
 	options := util.NewFetchResourceOptions(cmdFactory, streams)
 
 	cmd := &cobra.Command{
-		Use:   "delete RESOURCE NAME",
-		Short: "Delete custom resources deployment",
+		Use:   "delete RESOURCE_TYPE RESOURCE_NAME",
+		Short: "Delete a custom resource deployment",
 		Long:  "Delete a NIM Operator custom resource's deployment",
 		Example: `  nim delete nimcache my-cache
   nim delete nimservice my-service`,

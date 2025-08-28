@@ -26,6 +26,7 @@ func NewGetNIMCacheCommand(cmdFactory cmdutil.Factory, streams genericclioptions
 		Use:          "nimcache [NAME]",
 		Aliases:      []string{"nimcaches"},
 		Short:        "Get NIMCache information.",
+		Long: 		  "Get a summary general NIMCache information for all NIMServices in a namespace.",
 		SilenceUsage: true,
 		// ValidArgsFunction: completion.RayClusterCompletionFunc(cmdFactory),
 		Args: cobra.MaximumNArgs(1),

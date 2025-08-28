@@ -25,7 +25,7 @@ func NewStatusNIMCacheCommand(cmdFactory cmdutil.Factory, streams genericcliopti
 		Use:          "nimcache [NAME]",
 		Aliases:      []string{"nimcaches"},
 		Short:        "Get NIMCache status.",
-		Long: 		  "Get detailed status information about one NIMCache, or a summary of all NIMCaches.",
+		Long: 		  "Get detailed status information about one NIMCache, or a summary of all NIMCaches in a namespace.",
 		SilenceUsage: true,
 		// ValidArgsFunction: completion.RayClusterCompletionFunc(cmdFactory),
 		Args: cobra.MaximumNArgs(1),

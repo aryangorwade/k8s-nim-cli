@@ -2,6 +2,7 @@ package deploy
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
@@ -76,19 +77,14 @@ func NewDeployNIMServiceCommand(cmdFactory cmdutil.Factory, streams genericcliop
 
 	cmd := &cobra.Command{
 		Use: "nimservice [NAME]",
-		Short: `Deploy new NIMService with specified information.
-Minimum required flags are --image-repository, --tag, and storage: reference either an existing NIMCache with --nimcache-storage-name, or reference an existing/create new PVC.
-	If using existing PVC, minimum required flags are pvc-storage-name.
-	If creating new PVC, minimum required flags are pvc-create, pvc-size, pvc-volume-access-mode, pvc-storage-class.`,
+		Short: `Deploy new NIMService with specified information. 
+
+Minimum required flags are --image-repository, --tag, and storage: reference either an existing NIMCache with --nimcache-storage-name, or reference an existing/create new PVC. 
+	- If using existing PVC, minimum required flags are pvc-storage-name. 
+	- If creating new PVC, minimum required flags are pvc-create, pvc-size, pvc-volume-access-mode, pvc-storage-class.`,
 		SilenceUsage: true,
 		// ValidArgsFunction: completion.RayClusterCompletionFunc(cmdFactory),
 		Args: cobra.MaximumNArgs(1),
-		Example: `Deploying NIMService with existing PVC as storage.
-		kl nim deploy nimservice llama3-nimservice --image-repository=nvcr.io/nim/meta/llama-3.1-8b-instruct --tag=1.3.3 --pvc-storage-name=nim-pvc
-    Deploying NIMService without existing PVC as storage.
-		kl nim deploy nimservice llama3-nimservice  --image-repository=nvcr.io/nim/meta/llama-3.1-8b-instruct --tag=1.3.3 --pvc-create=true --pvc-size=20Gi --pvc-volume-access-mode=ReadWriteMany --pvc-storage-class=<storage-class-name>
-	Deploying NIMService with existing NIMCache as storage.
-		kl nim deploy nimservice llama3-nimservice --image-repository=nvcr.io/nim/meta/llama-3.1-8b-instruct --tag=1.3.3 --nimcache-storage-name=<nimcache-name>`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				cmd.HelpFunc()(cmd, args)
@@ -107,6 +103,17 @@ Minimum required flags are --image-repository, --tag, and storage: reference eit
 			}
 		},
 	}
+
+	cmd.Example = strings.Join([]string{
+		"  Deploying NIMService with existing PVC as storage.",
+		"    kl nim deploy nimservice llama3-nimservice --image-repository=nvcr.io/nim/meta/llama-3.1-8b-instruct --tag=1.3.3 --pvc-storage-name=nim-pvc",
+		"",
+		"  Deploying NIMService without existing PVC as storage.",
+		"    kl nim deploy nimservice llama3-nimservice --image-repository=nvcr.io/nim/meta/llama-3.1-8b-instruct --tag=1.3.3 --pvc-create=true --pvc-size=20Gi --pvc-volume-access-mode=ReadWriteMany --pvc-storage-class=<storage-class-name>",
+		"",
+		"  Deploying NIMService with existing NIMCache as storage.",
+		"    kl nim deploy nimservice llama3-nimservice --image-repository=nvcr.io/nim/meta/llama-3.1-8b-instruct --tag=1.3.3 --nimcache-storage-name=<nimcache-name>",
+	  }, "\n")
 
 	// The first argument will be name. Other arguments will be specified as flags.
 	cmd.Flags().StringVar(&options.ImageRepository, "image-repository", util.ImageRepository, "Repository to pull image from. Required")

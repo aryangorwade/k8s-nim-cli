@@ -25,6 +25,7 @@ func NewStatusNIMServiceCommand(cmdFactory cmdutil.Factory, streams genericcliop
 		Use:          "nimservice [NAME]",
 		Aliases:      []string{"nimservices"},
 		Short:        "Get NIMService information.",
+		Long: 		  "Get a summary of status information for all NIMServices in a namespace.",
 		SilenceUsage: true,
 		// ValidArgsFunction: completion.RayClusterCompletionFunc(cmdFactory),
 		Args: cobra.MaximumNArgs(1),
