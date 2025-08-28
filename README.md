@@ -1,532 +1,317 @@
-### High-level overview
-- **Purpose**: A kubectl plugin to manage NVIDIA NIM Operator custom resources on Kubernetes: `NIMService` and `NIMCache`.
-- **Binary/entrypoint**: `kubectl-nim` with a root `nim` command that exposes subcommands: `get`, `status`, `logs`, `delete`, `deploy`.
-- **Core libraries**:
-  - **Cobra**: command line parsing.
-  - **kubectl’s Factory**: integrates kubeconfig, REST config, and typed client creation.
-  - **NIM Operator clientset**: typed API for `NIMService` and `NIMCache`.
-  - **controller-runtime zap logger**: global structured logging.
+## Command tree and execution flows
 
-Project tree (selected):
-- `cmd/kubectl-nim.go`: binary entrypoint
-- `pkg/cmd/`: root and subcommands
-  - `nim.go`: root command factory and wiring
-  - `get/`, `status/`, `log/`, `delete/`, `deploy/`: subcommand implementations
-- `pkg/util/`: shared types, defaults, clients, and resource fetching helpers
-- `scripts/`: embedded bash script used by `nim logs`
+### Root command: `nim`
 
-### Entrypoint: process startup → Cobra root → subcommands
-- The binary configures Cobra with `genericiooptions.IOStreams` and executes the root command.
+- Hidden kube flags still work (e.g., `--kubeconfig`, `--context`, etc.) but are not shown in help text.
+- Subcommands:
+  - `nim get`
+  - `nim status`
+  - `nim logs collect`
+  - `nim delete`
+  - `nim deploy`
 
-```12:21:cmd/kubectl-nim.go
-func main() {
-	flags := flag.NewFlagSet("kubectl-nim", flag.ExitOnError)
-	flag.CommandLine = flags
-	ioStreams := genericiooptions.IOStreams{In: os.Stdin, Out: os.Stdout, ErrOut: os.Stderr}
+Each subcommand follows a consistent pattern:
+1. Construct an Options struct and bind flags.
+2. Resolve namespace/positional args (`CompleteNamespace` or equivalent).
+3. Create the `client.Client` via the kubectl `Factory` (if needed).
+4. Set `ResourceType` when applicable.
+5. Invoke a `Run` function that either:
+   - fetches and prints resources (for `get`/`status`), or
+   - creates/deletes resources (for `deploy`/`delete`), or
+   - runs diagnostics (for `logs`).
 
-	root := cmd.NewNIMCommand(ioStreams)
-	if err := root.Execute(); err != nil {
-		os.Exit(1)
-	}
-}
-```
+---
 
-- The root command:
-  - Sets a global zap logger via controller-runtime and keeps help behavior as default `Run`.
-  - Instantiates kubectl `ConfigFlags` and a `cmdutil.Factory`, hides kubeconfig flags from help, and wires subcommands.
+## Subcommand: get
 
-```25:56:pkg/cmd/nim.go
-func NewNIMCommand(streams genericiooptions.IOStreams) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:          "nim",
-		Short:        "nim operator kubectl plugin",
-		Long:         "Manage NIM Operator resources like NIMCache and NIMService on Kubernetes",
-		SilenceUsage: true,
-		Run: func(cmd *cobra.Command, args []string) {
-			cmd.HelpFunc()(cmd, args)
-		},
-		CompletionOptions: cobra.CompletionOptions{
-			DisableDefaultCmd: true,
-		},
-	}
-
-	configFlags := genericclioptions.NewConfigFlags(true)
-	configFlags.AddFlags(cmd.PersistentFlags())
-
-	cmd.PersistentFlags().VisitAll(func(f *pflag.Flag) {
-		_ = cmd.PersistentFlags().MarkHidden(f.Name)
-	})
-
-	cmdFactory := cmdutil.NewFactory(configFlags)
-
-	cmd.AddCommand(get.NewGetCommand(cmdFactory, streams))
-	cmd.AddCommand(status.NewStatusCommand(cmdFactory, streams))
-	cmd.AddCommand(log.NewLogCommand(cmdFactory, streams))
-	cmd.AddCommand(delete.NewDeleteCommand(cmdFactory, streams))
-	cmd.AddCommand(deploy.NewDeployCommand(cmdFactory, streams))
-
-	return cmd
-}
-```
-
-### Utilities: shared types, defaults, client builder, and resource fetching
-- **`pkg/util/types.go`**
-  - Defines a small enum for resource kind selection across commands.
-
-```1:8:pkg/util/types.go
-type ResourceType string
-
-const (
-	NIMService ResourceType = "nimservice"
-	NIMCache   ResourceType = "nimcache"
-)
-```
-
-- **`pkg/util/constant.go`**
-  - Collects common default values for flags across commands (PVCs, images, pull secrets, service configuration, scaling), and NIMCache-specific flags (model source, resource sizes, QoS, etc.). Defaults are centralized here to ensure consistency and to differentiate “not provided” vs “empty”.
-
-- **Why defaults are centralized**:
-  - Cobra flags need well-defined zero/default values. Some flags represent optional fields in CR specs (e.g., unset vs empty). Centralizing defaults avoids duplication and keeps UX consistent across commands.
-
-- **`pkg/util/client/client.go`**
-  - Wraps creation of both the Kubernetes core `Clientset` and the NIM Operator typed clientset from the shared `cmdutil.Factory`.
-  - Exposes a `Client` interface with `KubernetesClient()` and `NIMClient()`; commands depend on this interface for testability and separation of concerns.
-
-- **`pkg/util/fetch_resource.go`**
-  - Shared options and helper to resolve namespace, parse arguments, and fetch CR lists via the typed clientset.
-  - Used by `get`, `status`, `delete`, and namespace parsing for `logs`.
-
-Key parts:
-- Options struct (shared across read/describe/delete):
-
-```21:28:pkg/util/fetch_resource.go
-type FetchResourceOptions struct {
-	cmdFactory    cmdutil.Factory
-	IoStreams     *genericclioptions.IOStreams
-	Namespace     string
-	ResourceName  string
-	ResourceType  ResourceType
-	AllNamespaces bool
-}
-```
-
-- Namespace/args completion:
-  - Pulls `--namespace`; defaults to `default`.
-  - If one positional arg is present, treats it as a resource name (for get/status).
-  - If two args are present, validates the resource type and takes the second as name (used by delete).
-
-```37:69:pkg/util/fetch_resource.go
-func (options *FetchResourceOptions) CompleteNamespace(args []string, cmd *cobra.Command) error {
-	...
-	if len(args) == 1 {
-		options.ResourceName = args[0]
-	}
-	if len(args) == 2 {
-		resourceType := ResourceType(strings.ToLower(args[0]))
-		switch resourceType {
-		case NIMService, NIMCache:
-			options.ResourceType = resourceType
-		default:
-			return fmt.Errorf("invalid resource type %q. Valid types are: nimservice, nimcache", args[0])
-		}
-		options.ResourceName = args[1]
-	}
-	return nil
-}
-```
-
-- Fetch function:
-  - Produces a `.List(...)` call with an optional field selector if a name is given.
-  - Returns typed `NIMServiceList` or `NIMCacheList`.
-  - Validates “not found” for name-constrained queries to provide good UX.
-
-```71:151:pkg/util/fetch_resource.go
-func FetchResources(ctx context.Context, options *FetchResourceOptions, k8sClient client.Client) (interface{}, error) {
-	...
-	switch options.ResourceType {
-	case NIMService:
-		...
-		if options.AllNamespaces {
-			resourceList, err = k8sClient.NIMClient().AppsV1alpha1().NIMServices("").List(ctx, listopts)
-		} else {
-			resourceList, err = k8sClient.NIMClient().AppsV1alpha1().NIMServices(options.Namespace).List(ctx, listopts)
-		}
-		...
-	case NIMCache:
-		...
-		if options.AllNamespaces {
-			resourceList, err = k8sClient.NIMClient().AppsV1alpha1().NIMCaches("").List(ctx, listopts)
-		} else {
-			resourceList, err = k8sClient.NIMClient().AppsV1alpha1().NIMCaches(options.Namespace).List(ctx, listopts)
-		}
-		...
-	}
-	return resourceList, nil
-}
-```
-
-- Condition summarization:
-  - `MessageCondition(...)` picks a condition to display: prioritizes `Failed` with message, then `Ready`, then first with non-empty message, otherwise the first condition.
-
-### Subcommand: get
 - Location: `pkg/cmd/get/`
-- Command: `nim get`
-  - Subcommands: `nim get nimservice [NAME] [-A]`, `nim get nimcache [NAME] [-A]`
+- Purpose: print concise tables summarizing `NIMService` or `NIMCache`.
+- Usage:
+  - `nim get nimservice [NAME] [-n NAMESPACE] [-A]`
+  - `nim get nimcache [NAME] [-n NAMESPACE] [-A]`
+- Flags:
+  - `--all-namespaces, -A`: search across all namespaces (ignores `--namespace`).
 - Flow:
-  - Create `FetchResourceOptions`, bind `--all-namespaces`.
-  - On `RunE`: complete namespace, create client, set `ResourceType`, call common `get.Run`.
+  - Build `FetchResourceOptions`; set `ResourceType`; call a common `Run` that calls `util.FetchResources`.
+  - Cast the returned list to the requested type and print a table.
 
-```36:63:pkg/cmd/get/get.go
-func Run(ctx context.Context, options *util.FetchResourceOptions, k8sClient client.Client) error {
-	resourceList, err := util.FetchResources(ctx, options, k8sClient)
-	if err != nil {
-		return err
-	}
-	switch options.ResourceType {
-	case util.NIMService:
-		nimServiceList, ok := resourceList.(*appsv1alpha1.NIMServiceList)
-		...
-		return printNIMServices(nimServiceList, options.IoStreams.Out)
-	case util.NIMCache:
-		nimCacheList, ok := resourceList.(*appsv1alpha1.NIMCacheList)
-		...
-		return printNIMCaches(nimCacheList, options.IoStreams.Out)
-	}
-	return err
-}
-```
-
-- `nim get nimservice` output:
+Output:
+- For `nimservice`:
   - Columns: Name, Namespace, Image, Expose Service, Replicas, Scale, Storage, Resources, State, Age.
-  - Helpers:
-    - `getExpose(...)`: formats service name/port if present.
-    - `getScale(...)`: “disabled” or min/max replicas if HPA enabled.
-    - `getStorage(...)`: displays NIMCache reference, PVC details, or HostPath.
-    - `getNIMServiceResources(...)`: prints limits/requests/claims compactly.
-
-- `nim get nimcache` output:
+  - Helpers interpret `Spec.Image`, `Spec.Expose`, `Spec.Storage`, `Spec.Resources`, `Spec.Scale enabled/HPA` and `Status.State`.
+- For `nimcache`:
   - Columns: Name, Namespace, Source, Model/ModelPuller, CPU, Memory, PVC Volume, State, Age.
-  - Helpers:
-    - `getSource(...)`: NGC vs NeMo DataStore vs HuggingFace.
-    - `getModel(...)`: depending on source, either model puller image, model name, or endpoint.
-    - `getPVCDetails(...)`: PVC name + size or size.
+  - Helpers interpret the `Spec.Source.*` shape and `Spec.Resources`, and derive a human readable key (e.g., HF model name vs endpoint).
 
-### Subcommand: status
+Why it’s split:
+- Each resource type has dedicated printer and field summarization logic; reusing `FetchResourceOptions` keeps discovery logic uniform.
+
+---
+
+## Subcommand: status
+
 - Location: `pkg/cmd/status/`
-- Command: `nim status`
-  - Subcommands: `nim status nimservice [NAME] [-A]`, `nim status nimcache [NAME] [-A]`
-- Flow mirrors `get`, but focuses on status fields and conditions via `util.MessageCondition`.
+- Purpose: focus on conditions/status rather than spec summaries.
+- Usage:
+  - `nim status nimservice [NAME] [-n NAMESPACE] [-A]`
+  - `nim status nimcache [NAME] [-n NAMESPACE] [-A]`
+- Flow mirrors `get` but prints:
+  - For `nimservice`: Name, Namespace, State, Available Replicas, Type/Status (Condition-Type/Status), Last Transition Time, Message, Age.
+  - For `nimcache`:
+    - If a single named resource is requested and found: prints a detailed paragraph with name, namespace, state, PVC, a chosen condition, age, and a list of cached NIM profiles (from status).
+    - Otherwise: prints a table similar to `nimservice` but tailored to NIMCache (includes PVC).
 
-```36:67:pkg/cmd/status/status.go
-func Run (ctx context.Context, options *util.FetchResourceOptions, k8sClient client.Client) error {
-	resourceList, err := util.FetchResources(ctx, options, k8sClient)
-	...
-	switch options.ResourceType {
-	case util.NIMService:
-		nimServiceList := resourceList.(*appsv1alpha1.NIMServiceList)
-		return printNIMServices(nimServiceList, options.IoStreams.Out)
-	case util.NIMCache:
-		nimCacheList := resourceList.(*appsv1alpha1.NIMCacheList)
-		if options.ResourceName != "" && len(nimCacheList.Items) == 1 {
-			return printSingleNIMCache(&nimCacheList.Items[0], options.IoStreams.Out)
-		}
-		return printNIMCaches(nimCacheList, options.IoStreams.Out)
-	}
-	return err
-}
-```
+Key logic:
+- Uses `util.MessageCondition` to select a meaningful condition (prefer `Failed` with a non-empty message) for concise, actionable output.
 
-- `nim status nimservice` output:
-  - Columns: Name, Namespace, State, Available Replicas, Type/Status, Last Transition Time, Message, Age.
+---
 
-- `nim status nimcache` output:
-  - When a single named resource is requested and found, prints a multi-line paragraph:
-    - Name, Namespace, State, PVC, Type/Status, Last Transition Time, Message, Age, and “Cached NIM Profiles” enumerated.
-  - Otherwise, a table with columns similar to the NIMService status table but tailored to NIMCache (includes PVC).
+## Subcommand: logs
 
-### Subcommand: logs
 - Location: `pkg/cmd/log/`
-- Command: `nim logs collect [-n NAMESPACE]`
-- Purpose: Collect a diagnostic bundle (must-gather style) for the operator, NIM services/caches, cluster storage, and optionally NeMo microservices.
-- Architecture:
-  - The bash script `scripts/must-gather.sh` is embedded at compile time via `//go:embed` in `scripts/embed.go`.
-  - The command materializes the script to a temp file, marks it executable, and runs it with `OPERATOR_NAMESPACE=nim-operator` and `NIM_NAMESPACE=<namespace>` set.
-  - Both stdout and stderr are captured (the script uses `set -x`), and `ARTIFACT_DIR=...` is parsed from either stream.
-  - After script completion, the command lists the collected `.log` files under `<artifactDir>/nim` and prints their paths.
+- Purpose: collect a must-gather style diagnostic bundle.
+- Usage:
+  - `nim logs collect [-n NAMESPACE]`
+- Behavior:
+  - Embeds `scripts/must-gather.sh` at build time (via `//go:embed` in `scripts/embed.go`).
+  - On run:
+    - Writes the script to a temp file with `0755` and executes it with:
+      - `OPERATOR_NAMESPACE=nim-operator`
+      - `NIM_NAMESPACE=<namespace from flags>`
+    - Captures both stdout and stderr (script uses `set -x`).
+    - Parses `ARTIFACT_DIR=...` from the output.
+    - Lists `*.log` files under `<ARTIFACT_DIR>/nim` and prints their paths.
 
-```61:101:pkg/cmd/log/log.go
-func Run(ctx context.Context, options *util.FetchResourceOptions) error {
-	tmp, err := os.CreateTemp("", "must-gather-*.sh")
-	...
-	if err := os.WriteFile(tmp.Name(), scripts.MustGather, 0o755); err != nil {
-		return fmt.Errorf("write script: %w", err)
-	}
-	var stdout, stderr bytes.Buffer
-	cmd := exec.CommandContext(ctx, "/bin/bash", tmp.Name())
-	cmd.Env = append(os.Environ(),
-		"OPERATOR_NAMESPACE=nim-operator",
-		"NIM_NAMESPACE="+options.Namespace,
-	)
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("must-gather failed: %w\nstderr:\n%s", err, stderr.String())
-	}
-	artifactDir := parseArtifactDir(stdout.Bytes(), stderr.Bytes())
-	...
-	paths, err := listResourceLogPaths(artifactDir)
-	...
-	fmt.Printf("\nDiagnostic bundle created at  %s.\n", nimDir)
-	fmt.Printf("Saved %d log file(s) in:\n", len(paths))
-	for _, p := range paths {
-		fmt.Printf("  %s\n", p)
-	}
-	return nil
-}
-```
+The script collects:
+- Cluster version and GPU node info, storage classes/PVs/PVCs.
+- Operator pod logs/descriptions in `OPERATOR_NAMESPACE`.
+- NIM CRs (`nimservices`, `nimcaches`, `nimpipelines`) and associated pod logs/descriptions/ingress in `NIM_NAMESPACE`.
+- Optionally, NeMo microservices if `NEMO_NAMESPACE` is set.
 
-- The script itself:
-  - Validates `kubectl` or `oc` availability.
-  - Requires `OPERATOR_NAMESPACE` and `NIM_NAMESPACE`.
-  - Writes comprehensive cluster info, operator and workload resources, logs, and descriptions under a timestamped `ARTIFACT_DIR`.
-  - Collects NIM CRs (`nimcaches`, `nimservices`, `nimpipelines`), their pods/ingress, and storage objects; optionally collects NeMo microservices if `NEMO_NAMESPACE` is set.
+---
 
-### Subcommand: delete
+## Subcommand: delete
+
 - Location: `pkg/cmd/delete/`
-- Command: `nim delete (nimservice|nimcache) NAME [-n ...]`
+- Purpose: delete a named `NIMService` or `NIMCache`.
+- Usage:
+  - `nim delete nimservice NAME [-n NAMESPACE]`
+  - `nim delete nimcache NAME [-n NAMESPACE]`
 - Flow:
-  - Parses two positional arguments: resource type and name.
-  - Uses `FetchResourceOptions` to resolve namespace and validate kind; then fetches the item list with a name selector.
-  - If found, the command deletes via typed clientset with the namespace derived from the object (works even if `--namespace` didn’t match).
-  - Prints a confirmation to `stdout`.
+  - Parses `RESOURCE_TYPE` and `RESOURCE_NAME`.
+  - `CompleteNamespace` validates resource type and sets name.
+  - Calls `util.FetchResources` with a name field selector to validate existence and discover the resource’s actual namespace.
+  - Calls typed client `Delete(...)` in that namespace.
+  - Prints a human-readable confirmation.
 
-```68:109:pkg/cmd/delete/delete.go
-func Run(ctx context.Context, options *util.FetchResourceOptions, k8sClient client.Client) error {
-	resourceList, err := util.FetchResources(ctx, options, k8sClient)
-	...
-	switch options.ResourceType {
-	case util.NIMService:
-		nl, ok := resourceList.(*appsv1alpha1.NIMServiceList)
-		...
-		ns = nl.Items[0].Namespace
-		if err := k8sClient.NIMClient().AppsV1alpha1().NIMServices(ns).Delete(ctx, name, v1.DeleteOptions{}); err != nil {
-			return fmt.Errorf("failed to delete NIMService %s/%s: %w", ns, name, err)
-		}
-		fmt.Fprintf(options.IoStreams.Out, "NIMService %q deleted in namespace %q\n", name, ns)
-	case util.NIMCache:
-		...
-	}
-	return nil
-}
-```
+Notes:
+- Works even if `--namespace` doesn’t match; the discovered namespace from the live object is used.
 
-- Rationale:
-  - Using `FetchResources` first provides a uniform “not found” experience and dynamically discovers the live namespace of the resource before deletion.
+---
 
-### Subcommand: deploy
+## Subcommand: deploy
+
 - Location: `pkg/cmd/deploy/`
-- Command: `nim deploy`
-  - Subcommands: `nim deploy nimservice NAME [flags]`, `nim deploy nimcache NAME [flags]`
-- Design:
-  - Each deploy subcommand defines a dedicated `Options` struct with all flags used to compose a CR spec and provide clean separation of concerns.
-  - After `CompleteNamespace` and optional validation, the `Run` method builds the full CR object and creates it with the typed clientset.
+- Purpose: create new CRs (`NIMService` or `NIMCache`) by mapping flags to CR spec fields.
 
-#### Deploying NIMService
-- Options structure:
+Why dedicated `Options` structs exist here:
+- There are many flags; mixing them into shared structs would reduce clarity.
+- Keeps CLI parsing, defaulting, and CR spec composition cohesive and testable.
+- Improves separation of concerns (flag parsing vs spec building vs API calls).
 
-```23:50:pkg/cmd/deploy/deploy_nimservice.go
-type NIMServiceOptions struct {
-	cmdFactory             cmdutil.Factory
-	IoStreams              *genericclioptions.IOStreams
-	Namespace              string
-	ResourceName           string
-	ResourceType           util.ResourceType
-	AllNamespaces          bool
-	ImageRepository        string
-	Tag                    string
-	NIMCacheStorageName    string
-	NIMCacheStorageProfile string
-	PVCCreate              bool
-	PVCStorageName         string
-	PVCStorageClass        string
-	PVCSize                string
-	PVCVolumeAccessMode    string
-	PullPolicy             string
-	PullSecrets            []string
-	AuthSecret             string
-	ServicePort            int32
-	ServiceType            string
-	GPULimit               string
-	Replicas               int
-	ScaleMaxReplicas       int32
-	ScaleMinReplicas       int32
-	InferencePlatform      string
-	HostPath               string
-}
-```
+### Deploy `nimservice`
 
-- Why `NIMServiceOptions` exists:
-  - Deploy requires many flags and non-trivial mapping to CR spec. Encapsulating in a struct:
-    - Organizes flag parsing and defaults.
-    - Allows dedicated “fill spec” function for clarity and testability.
-    - Cleanly separates CLI parsing from API composition.
+- Usage:
+  - `nim deploy nimservice NAME [flags]`
+- Required by design:
+  - Must specify an image (`--image-repository`, `--tag`) and storage.
+  - Storage can be one of:
+    - Reference an existing `NIMCache` (`--nimcache-storage-name`).
+    - PVC (existing: `--pvc-storage-name`, or create: `--pvc-create=true` plus size, access mode, and storage class).
+    - HostPath (via `--host-path`, validated by admission).
+- Notable flags and mapping:
+  - Image: `--image-repository`, `--tag`, `--pull-policy`, `--pull-secrets`.
+  - Auth: `--auth-secret`.
+  - Service: `--service-port`, `--service-type` (ClusterIP/NodePort/LoadBalancer).
+  - Resources: `--gpu-limit` parsed into `Resources.Limits["nvidia.com/gpu"]`.
+  - Replicas: `--replicas`.
+  - Autoscaling:
+    - `--scale-max-replicas` enables autoscaling when provided (non-default).
+    - Optional `--scale-min-replicas` if you want to set HPA minimum.
+  - Inference platform: `--inference-platform` is one of `standalone` (default) or `kserve`.
 
-- `Run` flow:
-  - `CompleteNamespace` sets namespace and name.
-  - `FillOutNIMServiceSpec(options)` constructs the full `appsv1alpha1.NIMService` spec including:
-    - Image repo/tag, pull policy, pull secrets.
-    - Storage: one of NIMCache reference, PVC (existing or create), or HostPath (validated elsewhere by admission).
-    - Service exposure: port and service type.
-    - Resource requests: GPU limit quantity into `Resources.Limits["nvidia.com/gpu"]`.
-    - Replicas and HPA/Scale: enable autoscaling if `ScaleMaxReplicas` is present; set min if provided.
-    - Inference platform: `standalone` or `kserve`.
-  - Creates the CR in the resolved namespace.
+- Execution:
+  - `CompleteNamespace` sets `Namespace` and `ResourceName`.
+  - `FillOutNIMServiceSpec(options)` populates `appsv1alpha1.NIMService.Spec` using flags:
+    - Image spec, storage, auth, pull settings.
+    - Service exposure (port/type).
+    - Resource limits (GPU), replicas.
+    - HPA fields when autoscaling enabled.
+    - Inference platform enum.
+  - Typed client `Create(...)` is called with the final CR object.
 
-```144:164:pkg/cmd/deploy/deploy_nimservice.go
-func RunDeployNIMService(ctx context.Context, options *NIMServiceOptions, k8sClient client.Client) error {
-	nimservice, err := FillOutNIMServiceSpec(options)
-	...
-	nimservice.Name = options.ResourceName
-	nimservice.Namespace = options.Namespace
-	if _, err := k8sClient.NIMClient().AppsV1alpha1().NIMServices(options.Namespace).Create(ctx, nimservice, v1.CreateOptions{}); err != nil {
-		return fmt.Errorf("failed to create NIMService %s/%s: %w", options.Namespace, options.ResourceName, err)
-	}
-	fmt.Fprintf(options.IoStreams.Out, "NIMService %q created in namespace %q\n", options.ResourceName, options.Namespace)
-	return nil
-}
-```
+### Deploy `nimcache`
 
-#### Deploying NIMCache
-- Options structure:
-
-```25:60:pkg/cmd/deploy/deploy_nimcache.go
-type NIMCacheOptions struct {
-	cmdFactory    cmdutil.Factory
-	IoStreams     *genericclioptions.IOStreams
-	Namespace     string
-	ResourceName  string
-	ResourceType  util.ResourceType
-	AllNamespaces bool
-	PVCCreate           bool
-	PVCStorageName      string
-	PVCStorageClass     string
-	PVCSize             string
-	PVCVolumeAccessMode string
-	PullSecret string
-	AuthSecret string
-	SourceConfiguration string
-	ResourcesCPU        string
-	ResourcesMemory     string
-	ModelPuller         string
-	ModelEndpoint       string
-	Precision           string
-	Engine              string
-	TensorParallelism   string
-	QosProfile          string
-	Lora                string
-	Buildable           string
-	Profiles            []string
-	GPUs                []string
-	AltEndpoint         string
-	AltNamespace        string
-	ModelName           string
-	DatasetName         string
-	Revision            string
-}
-```
-
-- Why `NIMCacheOptions` exists:
-  - Supports multiple “sources” (`ngc`, `huggingface`, `nemodatastore`) each with overlapping but distinct fields (auth, puller, profiles, GPU targets, model identity, revision, etc.). The struct cleanly aggregates input and isolates the mapping logic.
-
+- Usage:
+  - `nim deploy nimcache NAME [flags]`
+- `--nim-source` (required) determines which source subsection is set in `Spec.Source`:
+  - `ngc`
+  - `huggingface`
+  - `nemodatastore`
 - Validation:
-  - `Validate(options)` ensures `--nim-source` is one of the supported values to disambiguate which fields to set when constructing the `Spec.Source`.
+  - `Validate(options)` ensures `--nim-source` is one of the supported values so the code knows which sub-struct to fill.
 
-- `Run` flow:
-  - Build the full `appsv1alpha1.NIMCache` via `FillOutNIMCacheSpec(options)`:
-    - `Spec.Source`:
-      - `ngc`: sets `AuthSecret`, `ModelPuller`, `PullSecret`, optional `ModelEndpoint`, and `Model` sub-fields (profiles, precision, engine, tensor parallelism, QoS, optional booleans `Lora`, `Buildable`) and optional GPU product list.
-      - `huggingface`: sets endpoint/namespace, optional model/dataset, `AuthSecret`, `ModelPuller`, `PullSecret`, optional revision.
-      - `nemodatastore`: same shape as huggingface, but under `DataStore` fields.
-    - Resources: CPU and Memory as `resource.Quantity`.
-    - Storage: PVC fields including “create” semantics and volume access mode validation.
-  - Create the CR in the namespace.
+- Flags and mapping (selected):
+  - Common to sources:
+    - Auth/pull: `--auth-secret`, `--model-puller`, `--pull-secret`.
+    - Optional model selectors: `--profiles`, `--gpus` (GPU product names).
+  - NGC:
+    - `--ngc-model-endpoint` (optional).
+    - Model subfields: `--precision`, `--engine`, `--tensor-parallelism`, `--qos-profile`.
+    - `--lora`, `--buildable` are string booleans parsed to pointers.
+  - HuggingFace / NeMo DataStore:
+    - Alternate endpoint/namespace: `--alt-endpoint`, `--alt-namespace`.
+    - Object identity: `--model-name`, `--dataset-name`, `--revision`.
+    - Same auth/puller/pull-secret as above.
+  - Resources for caching job:
+    - `--resources-cpu`, `--resources-memory`.
+  - Storage (PVC):
+    - Name for existing PVC (`--pvc-storage-name`), or creation fields:
+      - `--pvc-create=true`, `--pvc-size`, `--pvc-volume-access-mode`, `--pvc-storage-class`.
 
-```175:195:pkg/cmd/deploy/deploy_nimcache.go
-func RunDeployNIMCache(ctx context.Context, options *NIMCacheOptions, k8sClient client.Client) error {
-	nimcache, err := FillOutNIMCacheSpec(options)
-	...
-	nimcache.Name = options.ResourceName
-	nimcache.Namespace = options.Namespace
-	if _, err := k8sClient.NIMClient().AppsV1alpha1().NIMCaches(options.Namespace).Create(ctx, nimcache, v1.CreateOptions{}); err != nil {
-		return fmt.Errorf("failed to create NIMCache %s/%s: %w", options.Namespace, options.ResourceName, err)
-	}
-	fmt.Fprintf(options.IoStreams.Out, "NIMCache %q created in namespace %q\n", options.ResourceName, options.Namespace)
-	return nil
-}
-```
+- Execution:
+  - `CompleteNamespace` sets `Namespace` and `ResourceName`.
+  - `FillOutNIMCacheSpec(options)`:
+    - Sets the correct source sub-struct:
+      - NGC: auth/puller/pull-secret, optional endpoint, full `Model` block including QoS/precision/engine/TPU/GPUs/Lora/Buildable.
+      - HF/DataStore: endpoint/namespace, optional model/dataset/revision; auth/puller/pull-secret.
+    - Parses resource quantities for CPU/Memory.
+    - PVC fields + “create” semantics and access mode validation.
+  - Typed client `Create(...)` with the final CR.
 
-### Why the various Options structs exist
-- **Encapsulation of CLI params**: Each command has a natural grouping of inputs (flags, positional args). Options structs keep these cohesive.
-- **Separation of concerns**: Parsing flags vs. composing Kubernetes CRs are separate problems. Options act as the boundary, enabling clean “fill spec” functions.
-- **Testability**: Functions like `FillOutNIMServiceSpec` and `FillOutNIMCacheSpec` can be unit-tested by instantiating options with different combinations.
-- **Defaults and null semantics**: Combined with `pkg/util/constant.go`, Options distinguish between unset and deliberately-empty values, which matters for optional CR fields.
+---
 
-### How “Run” functions work end-to-end
-- For “reader” commands (`get`, `status`):
-  1. Build `FetchResourceOptions` + bind flags.
-  2. `CompleteNamespace(args, cmd)`: resolve namespace; optionally set name; validate type if needed.
-  3. Build `client.Client` via factory.
-  4. Set `ResourceType` and call common `Run`.
-  5. `Run` invokes `util.FetchResources` which lists typed CRs with an optional field selector by name.
-  6. Cast the result to the specific list type and print with formatters.
+## Execution and error handling patterns
 
-- For `delete`:
-  1. Parse `(nimservice|nimcache) NAME`.
-  2. `CompleteNamespace` + `ResourceType` assignment.
-  3. Fetch list by name via `FetchResources` to validate existence and discover actual namespace.
-  4. Call `Delete(...)` on the typed clientset, then print confirmation.
-
-- For `deploy`:
-  1. Per-kind options struct is populated from flags.
-  2. `CompleteNamespace` sets namespace and resource name.
-  3. Build CR spec via a dedicated “FillOutSpec” function.
-  4. Create the resource in the cluster via typed clientset, then print confirmation.
-
-- For `logs`:
-  1. Namespace is parsed through the shared `FetchResourceOptions`.
-  2. Embedded script is written to a temp file with execute permissions and invoked with the proper env vars.
-  3. Output parsing extracts `ARTIFACT_DIR`, and the command then prints the resulting log bundle contents.
-
-### Notes on behavior and UX
-- **Kubeconfig flags hidden**: Although the CLI inherits `kubectl`’s kubeconfig flags, they are hidden in help for a clean UX. They continue to work via Cobra’s persistent flags.
-- **All-namespaces support**: `get` and `status` support `-A/--all-namespaces`. Name lookups use a field selector on `.metadata.name`, so uniqueness across namespaces is handled by the caller’s selection.
-- **Cross-namespace delete**: `delete` discovers the live namespace of the named resource, allowing users to delete without perfectly specifying `-n`.
-- **Condition messaging**: `status` picks a meaningful condition (prefer `Failed` with a message) to surface user-actionable context.
-
-### External APIs and types
-- The CLI consumes CRDs from the NIM operator via `github.com/NVIDIA/k8s-nim-operator/api/apps/v1alpha1`.
-- It creates a typed client using `github.com/NVIDIA/k8s-nim-operator/api/versioned` and the REST config from the `cmdutil.Factory`.
-
-### Typical usage
-- Get:
-  - `nim get nimservice` or `nim get nimservice NAME`
-  - `nim get nimcache -A`
-- Status:
-  - `nim status nimcache my-cache`
-  - `nim status nimservice -n ns`
+- Kube flags are hidden in help but are present as persistent flags; users may still pass `--kubeconfig`, `--context`, etc.
+- Namespaces:
+  - Defaults to `default` unless `--namespace` is provided.
+  - `--all-namespaces` is supported for read-only operations.
+- Lookup by name:
+  - Uses a `.List` with field selector on `metadata.name` for precise matching.
+- Condition selection:
+  - Status commands pick the most useful condition (`Failed` with message > `Ready` > any with message > first) to surface actionable messages.
+- Deletion:
+  - Always fetch before delete to discover the resource’s actual namespace and provide consistent “not found” errors.
 - Logs:
-  - `nim logs collect -n ns`
-- Delete:
-  - `nim delete nimservice my-svc -n ns`
-  - `nim delete nimcache my-cache`
-- Deploy:
-  - NIMService (PVC existing): `nim deploy nimservice svc --image-repository=... --tag=... --pvc-storage-name=...`
-  - NIMService (create PVC): `nim deploy nimservice svc --image-repository=... --tag=... --pvc-create=true --pvc-size=... --pvc-volume-access-mode=... --pvc-storage-class=...`
-  - NIMService (NIMCache storage): `nim deploy nimservice svc --image-repository=... --tag=... --nimcache-storage-name=<nimcache>`
-  - NIMCache (NGC): `nim deploy nimcache cache --nim-source=ngc --model-puller=... --auth-secret=... [--profiles=...] [--gpus=...]`
-  - NIMCache (HF/NeMo DataStore): `nim deploy nimcache cache --nim-source=huggingface --alt-endpoint=... --alt-namespace=... --auth-secret=... --model-puller=... --pull-secret=...`
+  - The diagnostic script is executed in a subprocess with both streams captured; any failure includes stderr for easier triage.
 
-- The CLI is a `kubectl` plugin with a Cobra root in `pkg/cmd/nim.go`, and entrypoint `cmd/kubectl-nim.go`.
-- Shared utilities in `pkg/util/` provide: defaults, resource-kind enums, a dual clientset builder, and a common resource fetcher with namespace/arg parsing.
-- Each subcommand follows a predictable pattern: complete options → build client → fetch or compose CRs → print or create/delete.
-- Deploy subcommands rely on dedicated `Options` structs to capture flags and map them directly into `NIMService`/`NIMCache` specs, then create CRs via the typed NIM client.
+---
+
+## Scripts
+
+- `scripts/embed.go`: compile-time embeds `must-gather.sh` (Go 1.16+ `embed`).
+- `scripts/must-gather.sh`: the collection logic:
+  - Requires `OPERATOR_NAMESPACE` and `NIM_NAMESPACE`.
+  - Collects cluster, storage, operator, and workload data into `ARTIFACT_DIR` (default `/tmp/nim_log_disagnostic_bundle_<ts>`).
+  - Uses `kubectl` or `oc` if `kubectl` is unavailable.
+
+---
+
+## Tests (brief overview)
+
+- `tests/` and subcommand-specific `*_test.go` files under `pkg/cmd/*` verify:
+  - Command wiring and help behavior.
+  - Flag parsing.
+  - Output formatting for `get`/`status`.
+  - `logs` command integration.
+  - `delete`/`deploy` behavior and validation surfaces.
+
+---
+
+## Extensibility guidelines
+
+- Adding a subcommand:
+  - Create `pkg/cmd/<name>/` with `New<Name>Command(...)` and one or more `RunE` handlers.
+  - If it fetches CRs, reuse `util.FetchResourceOptions` and `util.FetchResources`.
+  - If it creates CRs, define a dedicated `Options` struct and a `FillOut<CR>Spec` function.
+  - Register it in `pkg/cmd/nim.go`.
+
+- Adding new flags:
+  - Add defaults to `pkg/util/constant.go` (if cross-cutting).
+  - Extend the relevant `Options` struct and wire `cmd.Flags().XxxVar(&opts.Field, ...)`.
+  - Extend spec fill logic to map the flag onto the CR spec.
+
+- Adding support for a new NIM resource type:
+  - Add a new `ResourceType` value in `pkg/util/types.go`.
+  - Extend `util.FetchResources` to list the new resource.
+  - Add `get`/`status` printers.
+  - Update `delete` (if deletion is supported).
+  - Add `deploy` (if creation is supported).
+
+---
+
+## Usage examples
+
+- Get:
+  - `nim get nimservice`
+  - `nim get nimservice llama3 -n nim`
+  - `nim get nimcache -A`
+
+- Status:
+  - `nim status nimcache hf-cache -n models`
+  - `nim status nimservice -n nim`
+
+- Logs:
+  - `nim logs collect -n nim`
+  - The command prints the bundle path and enumerates saved `*.log` files.
+
+- Delete:
+  - `nim delete nimservice my-svc -n nim`
+  - `nim delete nimcache my-cache`  (namespace inferred from live object)
+
+- Deploy NIMService:
+  - With existing PVC:
+    - `nim deploy nimservice llama3 --image-repository=nvcr.io/nim/meta/llama-3.1-8b-instruct --tag=1.3.3 --pvc-storage-name=nim-pvc`
+  - Create PVC:
+    - `nim deploy nimservice llama3 --image-repository=... --tag=... --pvc-create=true --pvc-size=20Gi --pvc-volume-access-mode=ReadWriteMany --pvc-storage-class=<class>`
+  - Use NIMCache storage:
+    - `nim deploy nimservice llama3 --image-repository=... --tag=... --nimcache-storage-name=my-cache`
+
+- Deploy NIMCache:
+  - NGC:
+    - `nim deploy nimcache ngc-cache --nim-source=ngc --model-puller=<image> --auth-secret=ngc-api-secret --profiles=fp8,h100 --gpus=h100 --precision=fp8 --engine=tensorrt_llm`
+  - HF:
+    - `nim deploy nimcache hf-cache --nim-source=huggingface --alt-endpoint=https://huggingface.co --alt-namespace=myorg --auth-secret=hf-secret --model-puller=<image> --pull-secret=ngc-secret --model-name=facebook/opt-1.3b`
+  - NeMo DataStore:
+    - `nim deploy nimcache nds-cache --nim-source=nemodatastore --alt-endpoint=https://nds.example --alt-namespace=prod --auth-secret=nds-secret --model-puller=<image> --pull-secret=ngc-secret --dataset-name=my-dataset --revision=v1`
+
+---
+
+## Why the Options structs are important
+
+- They encapsulate all command inputs in one place:
+  - Makes flag defaults explicit (via `pkg/util/constant.go`).
+  - Supports nuanced “unset vs empty string” handling that maps to optional CR spec fields.
+- They separate flag parsing from CR spec composition:
+  - Dedicated `FillOut<CR>Spec` functions are easier to test and reason about.
+- They keep commands cohesive and maintainable as new flags are added.
+
+---
+
+## RBAC/permissions note
+
+- The CLI relies on the current kube context’s credentials.
+- Users must have permission to:
+  - List and get `NIMService`/`NIMCache` in targeted namespaces.
+  - Create resources (for `deploy`).
+  - Delete resources (for `delete`).
+  - Read cluster resources (for `logs collect`, via the embedded script).
+
+---
+
+- Architecture: `kubectl` plugin with Cobra root `nim`, subcommands in `pkg/cmd/*`, shared utilities in `pkg/util/*`, embedded diagnostic script in `scripts/`.
+- Subcommands: `get`/`status` summarize CRs; `deploy nimservice|nimcache` creates CRs; `delete` removes them; `logs collect` generates a diagnostic bundle.
+- Options structs: encapsulate flags and defaults, isolate CR spec mapping, and improve testability.
+- Run functions: resolve namespace/args, build typed client, fetch/create/delete resources, or execute diagnostics; output is optimized for quick human consumption.
+
