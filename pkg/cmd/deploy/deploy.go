@@ -29,7 +29,7 @@ func NewDeployCommand(cmdFactory cmdutil.Factory, streams genericclioptions.IOSt
 		},
 	}
 
-	// cmd.AddCommand(NewDeployNIMCacheCommand(cmdFactory, streams))
+	cmd.AddCommand(NewDeployNIMCacheCommand(cmdFactory, streams))
 	cmd.AddCommand(NewDeployNIMServiceCommand(cmdFactory, streams))
 	return cmd
 }

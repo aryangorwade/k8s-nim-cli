@@ -1,0 +1,308 @@
+package deploy
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/spf13/cobra"
+	"k8s.io/apimachinery/pkg/api/resource"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/cli-runtime/pkg/genericclioptions"
+	cmdutil "k8s.io/kubectl/pkg/cmd/util"
+
+	"context"
+	util "k8s-nim-operator-cli/pkg/util"
+	"k8s-nim-operator-cli/pkg/util/client"
+
+	"strconv"
+
+	"k8s.io/utils/ptr"
+
+	appsv1alpha1 "github.com/NVIDIA/k8s-nim-operator/api/apps/v1alpha1"
+)
+
+type NIMCacheOptions struct {
+	cmdFactory    cmdutil.Factory
+	IoStreams     *genericclioptions.IOStreams
+	Namespace     string
+	ResourceName  string
+	ResourceType  util.ResourceType
+	AllNamespaces bool
+	// All PVC flags are reused.
+	PVCCreate           bool
+	PVCStorageName      string
+	PVCStorageClass     string
+	PVCSize             string
+	PVCVolumeAccessMode string
+	// All PVC flags are reused.
+	PullSecret string
+	AuthSecret string
+
+	SourceConfiguration string
+	ResourcesCPU        string
+	ResourcesMemory     string
+	ModelPuller         string
+	ModelEndpoint       string
+	Precision           string
+	Engine              string
+	TensorParallelism   string
+	QosProfile          string
+	Lora                string
+	Buildable           string
+	Profiles            []string
+	GPUs                []string
+	AltEndpoint         string
+	AltNamespace        string
+	ModelName           string
+	DatasetName         string
+	Revision            string
+}
+
+func NewNIMCacheOptions(cmdFactory cmdutil.Factory, streams genericclioptions.IOStreams) *NIMCacheOptions {
+	return &NIMCacheOptions{
+		cmdFactory: cmdFactory,
+		IoStreams:  &streams,
+	}
+}
+
+// Populates NIMServiceOptions with namespace and resource name (if present).
+func (options *NIMCacheOptions) CompleteNamespace(args []string, cmd *cobra.Command) error {
+	namespace, err := cmd.Flags().GetString("namespace")
+	if err != nil {
+		return fmt.Errorf("failed to get namespace: %w", err)
+	}
+	options.Namespace = namespace
+	if options.Namespace == "" {
+		options.Namespace = "default"
+	}
+
+	options.ResourceName = args[0]
+
+	return nil
+}
+
+func NewDeployNIMCacheCommand(cmdFactory cmdutil.Factory, streams genericclioptions.IOStreams) *cobra.Command {
+	options := NewNIMCacheOptions(cmdFactory, streams)
+
+	cmd := &cobra.Command{
+		Use: "nimcache [NAME]",
+		Short: `Deploy new NIMCache with specified information.
+Minimum required flags are --nim-source (and those required for that specific nim-source) and storage: reference an existing/create new PVC.
+
+auth-secret defaults to 'ngc-api-secret.' If using a different auth-secret, must specify it. The instructions below assume that.
+For --nim-source=ngc, minimum required flags are model-puller, auth-secret.
+For --nim-source=huggingface/nemodatastore, minumum required flags are alt-endpoint, alt-namespace, auth-secret, model-puller, pull-secret.
+
+If using existing PVC, minimum required flags are pvc-storage-name.
+If creating new PVC, minimum required flags are pvc-create, pvc-size, pvc-volume-access-mode, pvc-storage-class.`,
+		SilenceUsage: true,
+		// ValidArgsFunction: completion.RayClusterCompletionFunc(cmdFactory),
+		Args: cobra.MaximumNArgs(1),
+		// TODO: Complete
+		Example: `	Deploying NIMCache with source as NGC with an existing PVC as storage.
+		kl nim deploy nimcache my-nimcache --nim-source=ngc --model-puller=nvcr.io/nim/meta/llama-3.1-8b-instruct:1.3.3 --pull-secret=ngc-secret --auth-secret=ngc-api-secret --engine=tensorrt_llm --tensorParallelism=1 --pvc-storage-name=nim-pvc
+	Deploying NIMCache with source as HuggingFace while creating new PVC.
+		kl nim deploy nimcache my-nimcache  --alt-endpoint=<hf-endpoint> --alt-namespace=main --auth-secret=<hf-secret> model-puller=<model-puller> --pull-secret=<hf-pullsecret> --pvc-create=true --pvc-size=20Gi --pvc-volume-access-mode=ReadWriteMany --pvc-storage-class=<storage-class-name>`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				cmd.HelpFunc()(cmd, args)
+				return nil
+			} else {
+				if err := Validate(options); err != nil {
+					return err
+				}
+				if err := options.CompleteNamespace(args, cmd); err != nil {
+					return err
+				}
+				// running cmd.Execute or cmd.ExecuteE sets the context, which will be done by root.
+				k8sClient, err := client.NewClient(cmdFactory)
+				if err != nil {
+					return fmt.Errorf("failed to create client: %w", err)
+				}
+				options.ResourceType = util.NIMCache
+				return RunDeployNIMCache(cmd.Context(), options, k8sClient)
+			}
+		},
+	}
+
+	// The first argument will be name. Other arguments will be specified as flags.
+	cmd.Flags().StringVar(&options.SourceConfiguration, "nim-source", util.SourceConfiguration, "The NIM model source to cache. Must be one of 'ngc', 'huggingface', 'nemodatastore'.")
+	cmd.Flags().StringVar(&options.ResourcesCPU, "resources-cpu", util.ResourcesCPU, "Minimum CPU resources required for caching job to run.")
+	cmd.Flags().StringVar(&options.ResourcesMemory, "resources-memory", util.ResourcesMemory, "Minimum memory resources required for caching job to run.")
+	cmd.Flags().StringVar(&options.ModelPuller, "model-puller", util.ModelPuller, "Container image that can pull the model. If nim-source=huggingface, is the containerized huggingface-cli image to pull the data.")
+	cmd.Flags().StringVar(&options.ModelEndpoint, "ngc-model-endpoint", util.ModelEndpoint, "Endpoint for the model to be cached for Universal NIM. Used when nim-source=ngc.")
+	cmd.Flags().StringVar(&options.Precision, "precision", util.Precision, "Precision for model quantization.")
+	cmd.Flags().StringVar(&options.Engine, "engine", util.Engine, "Backend engine (tensorrt_llm, vllm).")
+	cmd.Flags().StringVar(&options.TensorParallelism, "tensor-parallelism", util.TensorParallelism, "Minimum GPUs required for the model computations.")
+	cmd.Flags().StringVar(&options.QosProfile, "qos-profile", util.QosProfile, "Supported QoS profile types for the models. Can be either 'throughput' or 'latency.'")
+	cmd.Flags().StringVar(&options.Lora, "lora", util.Lora, "Indicates a finetuned model with LoRa adapters. Can be either 'true' or 'false'.")
+	cmd.Flags().StringVar(&options.Buildable, "buildable", util.Buildable, "Indicates a finetuned model with LoRa adapters. Can be either 'true' or 'false'.")
+	cmd.Flags().StringVar(&options.PullSecret, "pull-secret", util.PullSecret, "Image pull secret.")
+	cmd.Flags().StringSliceVar(&options.Profiles, "profiles", util.Profiles, "Comma-separated list of the specific model profiles to Cache. When provided, rest of model parameters for profile selection (precision, engine, etc.) are ignored.")
+	cmd.Flags().StringSliceVar(&options.GPUs, "gpus", util.GPUs, "Comma-separated list of GPU product strings for matching GPUs to cache optimized models. Eg: h100, a100, l40s.")
+	cmd.Flags().StringVar(&options.AltEndpoint, "alt-endpoint", util.AltEndpoint, "Endpoint for HuggingFace/NeMo DataStore. If source is NeMo DataStore, this is the HuggingFace endpoint from NeMo DataStore.")
+	cmd.Flags().StringVar(&options.Namespace, "alt-namespace", util.AltNamespace, "Namespace within the HuggingFace Hub/NeMo DataStore.")
+	cmd.Flags().StringVar(&options.ModelName, "model-name", util.ModelName, "Name of the model when nim source is HF/Nemo.")
+	cmd.Flags().StringVar(&options.DatasetName, "dataset-name", util.DatasetName, "Name of the dataset when nim source is HF/Nemo.")
+	cmd.Flags().StringVar(&options.Revision, "revision", util.Revision, "Revision of object to be cached when nim source is HF/Nemo. Either a commit hash, branch name or tag.")
+
+	// Common flags.
+	cmd.Flags().BoolVar(&options.PVCCreate, "pvc-create", util.PVCCreate, "Specify as true to create a new PVC. Default is false.")
+	cmd.Flags().StringVar(&options.PVCStorageName, "pvc-storage-name", util.PVCStorageName, "PVC name to use for storage. Can be used to specify existing PVC as well as creating new PVC")
+	cmd.Flags().StringVar(&options.PVCVolumeAccessMode, "pvc-volume-access-mode", util.PVCVolumeAccessMode, "Volume access mode for PVC creation. Must provide if creating new PVC.")
+	cmd.Flags().StringVar(&options.PVCSize, "pvc-size", util.PVCSize, "Size for PVC creation. Must provide if creating new PVC.")
+	cmd.Flags().StringVar(&options.PVCStorageClass, "pvc-storage-class", util.PVCStorageClass, "Storage class for PVC creation. Optional.")
+	cmd.Flags().StringVar(&options.AuthSecret, "auth-secret", util.AuthSecret, "Auth secret to use for accessing NGC/HF/NemoDataStore.")
+
+	// add CPU/Memory resource limits?
+
+	return cmd
+}
+
+// Ensure the source is defined. This is because there are common fields across all three sources, making it challenging to decide which one the user intends to set.
+func Validate(options *NIMCacheOptions) error {
+	if strings.ToLower(options.SourceConfiguration) != "ngc" || strings.ToLower(options.SourceConfiguration) != "huggingface" || strings.ToLower(options.SourceConfiguration) != "nemodatastore" {
+		return fmt.Errorf("--nim-source must be set to one of 'ngc', 'huggingface', 'nemodatastore'")
+	}
+	return nil
+}
+
+// Will need different Run commands for NewDeployNIMCacheCommand and nimservice command.
+func RunDeployNIMCache(ctx context.Context, options *NIMCacheOptions, k8sClient client.Client) error {
+
+	// Fill out NIMCache Spec.
+	nimcache, err := FillOutNIMCacheSpec(options)
+	if err != nil {
+		return err
+	}
+
+	// Set metadata.
+	nimcache.Name = options.ResourceName
+	nimcache.Namespace = options.Namespace
+
+	// Create the NIMCache CR.
+	if _, err := k8sClient.NIMClient().AppsV1alpha1().NIMCaches(options.Namespace).Create(ctx, nimcache, v1.CreateOptions{}); err != nil {
+		return fmt.Errorf("failed to create NIMCache %s/%s: %w", options.Namespace, options.ResourceName, err)
+	}
+
+	fmt.Fprintf(options.IoStreams.Out, "NIMCache %q created in namespace %q\n", options.ResourceName, options.Namespace)
+	return nil
+}
+
+func FillOutNIMCacheSpec(options *NIMCacheOptions) (*appsv1alpha1.NIMCache, error) {
+	// Create a sample NIMService.
+	nimcache := appsv1alpha1.NIMCache{}
+
+	source := strings.ToLower(options.SourceConfiguration)
+
+	// Fill out Source
+	switch source {
+	case "ngc":
+		nimcache.Spec.Source.NGC.AuthSecret = options.AuthSecret
+		nimcache.Spec.Source.NGC.ModelPuller = options.ModelPuller
+		nimcache.Spec.Source.NGC.PullSecret = options.PullSecret
+		// nimcache.Spec.Source.NGC.ModelEndpoint = options.ModelEndpoint if not empty
+		// Model fields
+		if len(options.Profiles) > 0 {
+			nimcache.Spec.Source.NGC.Model.Profiles = options.Profiles
+		}
+		if options.Precision != "" {
+			nimcache.Spec.Source.NGC.Model.Precision = options.Precision
+		}
+		if options.Engine != "" {
+			nimcache.Spec.Source.NGC.Model.Engine = options.Engine
+		}
+		if options.TensorParallelism != "" {
+			nimcache.Spec.Source.NGC.Model.TensorParallelism = options.TensorParallelism
+		}
+		if options.QosProfile != "" {
+			nimcache.Spec.Source.NGC.Model.QoSProfile = options.QosProfile
+		}
+		if options.QosProfile != "" {
+			nimcache.Spec.Source.NGC.Model.QoSProfile = options.QosProfile
+		}
+		if len(options.GPUs) > 0 {
+			gpuSpecs := make([]appsv1alpha1.GPUSpec, 0, len(options.GPUs))
+			for _, product := range options.GPUs {
+				gpuSpecs = append(gpuSpecs, appsv1alpha1.GPUSpec{Product: product})
+			}
+			nimcache.Spec.Source.NGC.Model.GPUs = gpuSpecs
+		}
+		if options.Lora != "" {
+			parsed, err := strconv.ParseBool(options.Lora)
+			if err != nil {
+				return nil, fmt.Errorf("--lora must be either 'true' or 'false.'")
+			}
+			nimcache.Spec.Source.NGC.Model.Lora = ptr.To(parsed)
+		}
+		if options.Buildable != "" {
+			parsed, err := strconv.ParseBool(options.Buildable)
+			if err != nil {
+				return nil, fmt.Errorf("--buildable must be either 'true' or 'false.'")
+			}
+			nimcache.Spec.Source.NGC.Model.Buildable = ptr.To(parsed)
+		}
+	case "huggingface":
+		//nimcache.Spec.Source.HF.Endpoint = options.AltEndpoint
+		//nimcache.Spec.Source.Namespace = options.AltNamespace
+		fillOutDSHF(&nimcache, options)
+	default:
+		//NeMo DataStore
+		nimcache.Spec.Source.DataStore.Endpoint = options.AltEndpoint
+		// nimcache.Spec.Source.DataStore.Namespace = options.AltNamespace
+		fillOutDSHF(&nimcache, options)
+	}
+
+	if options.ResourcesCPU != "" {
+		parsedCPU, err := resource.ParseQuantity(options.ResourcesCPU)
+		if err != nil {
+			return nil, err
+		}
+		nimcache.Spec.Resources.CPU = parsedCPU
+	}
+
+	if options.ResourcesMemory != "" {
+		parsedMem, err := resource.ParseQuantity(options.ResourcesMemory)
+		if err != nil {
+			return nil, err
+		}
+		nimcache.Spec.Resources.Memory = parsedMem
+	}
+
+	return &nimcache, nil
+}
+
+func fillOutDSHF(nimcache *appsv1alpha1.NIMCache, options *NIMCacheOptions) {
+	if options.SourceConfiguration == "huggingface" {
+		/*
+			if options.ModelName != "" {
+				nimcache.Spec.Source.HF.ModelName = ptr.To(options.ModelName)
+			}
+			if options.DatasetName != "" {
+				nimcache.Spec.Source.HF.DatasetName = ptr.To(options.DatasetName)
+			}
+			nimcache.Spec.Source.HF.AuthSecret = options.AuthSecret
+			nimcache.Spec.Source.HF.ModelPuller = options.ModelPuller
+			nimcache.Spec.Source.HF.PullSecret = options.PullSecret
+			if options.Revision != "" {
+				nimcache.Spec.Source.HF.Revision = ptr.To(options.Revision)
+			}
+		*/
+	} else {
+		// NeMo DataStore
+		if options.ModelName != "" {
+			nimcache.Spec.Source.DataStore.ModelName = ptr.To(options.ModelName)
+		}
+		if options.DatasetName != "" {
+			nimcache.Spec.Source.DataStore.DatasetName = ptr.To(options.DatasetName)
+		}
+		nimcache.Spec.Source.DataStore.AuthSecret = options.AuthSecret
+		nimcache.Spec.Source.DataStore.ModelPuller = options.ModelPuller
+		nimcache.Spec.Source.DataStore.PullSecret = options.PullSecret
+		/*
+			if options.Revision != "" {
+				nimcache.Spec.Source.DataStore.Revision = ptr.To(options.Revision)
+			}
+		*/
+	}
+}
