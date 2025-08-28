@@ -5,15 +5,17 @@ import (
 	"io"
 	"time"
 
+	util "k8s-nim-operator-cli/pkg/util"
+
 	"github.com/spf13/cobra"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/duration"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"k8s.io/cli-runtime/pkg/printers"
 	cmdutil "k8s.io/kubectl/pkg/cmd/util"
-	util "k8s-nim-operator-cli/pkg/util"
 
 	"k8s-nim-operator-cli/pkg/util/client"
+
 	appsv1alpha1 "github.com/NVIDIA/k8s-nim-operator/api/apps/v1alpha1"
 )
 
@@ -21,12 +23,12 @@ func NewGetNIMCacheCommand(cmdFactory cmdutil.Factory, streams genericclioptions
 	options := util.NewFetchResourceOptions(cmdFactory, streams)
 
 	cmd := &cobra.Command{
-		Use:               "nimcache [NAME]",
-		Aliases:           []string{"nimcaches"},
-		Short:             "Get NIMCache information.",
-		SilenceUsage:      true,
+		Use:          "nimcache [NAME]",
+		Aliases:      []string{"nimcaches"},
+		Short:        "Get NIMCache information.",
+		SilenceUsage: true,
 		// ValidArgsFunction: completion.RayClusterCompletionFunc(cmdFactory),
-		Args:              cobra.MaximumNArgs(1),
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := options.CompleteNamespace(args, cmd); err != nil {
 				return err
@@ -70,10 +72,10 @@ func printNIMCaches(nimCacheList *appsv1alpha1.NIMCacheList, output io.Writer) e
 		resTable.Rows = append(resTable.Rows, v1.TableRow{
 			Cells: []interface{}{
 				nimcache.GetName(),
-				nimcache.GetNamespace(), 
+				nimcache.GetNamespace(),
 				getSource(&nimcache),
 				getModel(&nimcache),
-				nimcache.Spec.Resources.CPU.String(), 
+				nimcache.Spec.Resources.CPU.String(),
 				nimcache.Spec.Resources.Memory.String(),
 				getPVCDetails(&nimcache),
 				nimcache.Status.State,
@@ -91,7 +93,7 @@ func getSource(nimCache *appsv1alpha1.NIMCache) string {
 		return "NGC"
 	} else if nimCache.Spec.Source.DataStore != nil {
 		return "NVIDIA NeMo DataStore"
-	} 
+	}
 	return "HuggingFace Hub"
 }
 
@@ -100,26 +102,22 @@ func getSource(nimCache *appsv1alpha1.NIMCache) string {
 func getModel(nimCache *appsv1alpha1.NIMCache) string {
 	if nimCache.Spec.Source.NGC != nil {
 		return nimCache.Spec.Source.NGC.ModelPuller
+	} else if nimCache.Spec.Source.HF != nil {
+		if nimCache.Spec.Source.HF.ModelName == nil {
+			return nimCache.Spec.Source.HF.Endpoint
+		}
+		return *nimCache.Spec.Source.HF.ModelName
 	} else {
 		if nimCache.Spec.Source.DataStore.ModelName == nil {
 			return nimCache.Spec.Source.DataStore.Endpoint
 		}
 		return *nimCache.Spec.Source.DataStore.ModelName
 	}
-
-	/*
-	if nimCache.Spec.Source.HF != nil {
-		if nimCache.Spec.Source.HF.ModelName == nil {
-			return nimCache.Spec.Source.HF.Endpoint
-		}
-		return *nimCache.Spec.Source.HF.ModelName
-	}
-	*/
 }
 
 func getPVCDetails(nimCache *appsv1alpha1.NIMCache) string {
 	if nimCache.Spec.Storage.PVC.Name != "" {
 		return fmt.Sprintf("%s, %s", nimCache.Spec.Storage.PVC.Name, nimCache.Spec.Storage.PVC.Size)
-	} 
+	}
 	return fmt.Sprint(nimCache.Spec.Storage.PVC.Size)
 }

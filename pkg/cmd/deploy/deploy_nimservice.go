@@ -20,32 +20,32 @@ import (
 )
 
 type NIMServiceOptions struct {
-	cmdFactory      		cmdutil.Factory
-	IoStreams       		*genericclioptions.IOStreams
-	Namespace      			string
-	ResourceName    		string
-	ResourceType    		util.ResourceType
-	AllNamespaces   		bool
-	ImageRepository 		string
-	Tag            			string
-	NIMCacheStorageName		string
-	NIMCacheStorageProfile	string
-	PVCCreate				bool
-	PVCStorageName     		string
-	PVCStorageClass			string
-	PVCSize					string
-	PVCVolumeAccessMode		string
-	PullPolicy				string
-	PullSecrets				[]string
-	AuthSecret				string
-	ServicePort 			int32
-	ServiceType 			string
-	GPULimit 				string
-	Replicas 				int
-	ScaleMaxReplicas		int32
-	ScaleMinReplicas 		int32
-	InferencePlatform		string
-	HostPath 				string
+	cmdFactory             cmdutil.Factory
+	IoStreams              *genericclioptions.IOStreams
+	Namespace              string
+	ResourceName           string
+	ResourceType           util.ResourceType
+	AllNamespaces          bool
+	ImageRepository        string
+	Tag                    string
+	NIMCacheStorageName    string
+	NIMCacheStorageProfile string
+	PVCCreate              bool
+	PVCStorageName         string
+	PVCStorageClass        string
+	PVCSize                string
+	PVCVolumeAccessMode    string
+	PullPolicy             string
+	PullSecrets            []string
+	AuthSecret             string
+	ServicePort            int32
+	ServiceType            string
+	GPULimit               string
+	Replicas               int
+	ScaleMaxReplicas       int32
+	ScaleMinReplicas       int32
+	InferencePlatform      string
+	HostPath               string
 }
 
 func NewNIMServiceOptions(cmdFactory cmdutil.Factory, streams genericclioptions.IOStreams) *NIMServiceOptions {
@@ -65,7 +65,7 @@ func (options *NIMServiceOptions) CompleteNamespace(args []string, cmd *cobra.Co
 	if options.Namespace == "" {
 		options.Namespace = "default"
 	}
-	
+
 	options.ResourceName = args[0]
 
 	return nil
@@ -75,8 +75,8 @@ func NewDeployNIMServiceCommand(cmdFactory cmdutil.Factory, streams genericcliop
 	options := NewNIMServiceOptions(cmdFactory, streams)
 
 	cmd := &cobra.Command{
-		Use:          "nimservice [NAME]",
-		Short:        `Deploy new NIMService with specified information.
+		Use: "nimservice [NAME]",
+		Short: `Deploy new NIMService with specified information.
 Minimum required flags are --image-repository, --tag, and storage: reference either an existing NIMCache with --nimcache-storage-name, or reference an existing/create new PVC.
 	If using existing PVC, minimum required flags are pvc-storage-name.
 	If creating new PVC, minimum required flags are pvc-create, pvc-size, pvc-volume-access-mode, pvc-storage-class.`,
@@ -126,9 +126,8 @@ Minimum required flags are --image-repository, --tag, and storage: reference eit
 	cmd.Flags().IntVar(&options.Replicas, "replicas", util.Replicas, "Number of replicas for the NIMService.")
 	cmd.Flags().StringVar(&options.GPULimit, "gpu-limit", util.GPULimit, "Maximum number of GPUs the NIMService can use.")
 	cmd.Flags().Int32Var(&options.ScaleMaxReplicas, "scale-max-replicas", util.ScaleMaxReplicas, "Maximum number of replicas for the NIMService's HorizontalPodAutoscaler.")
-	cmd.Flags().Int32Var(&options.ScaleMinReplicas, "scale-min-replicas", util.ScaleMinReplicas, "Minimum number of replicas for the NIMService's HorizontalPodAutoscaler.") 
-	// This has no implementation because it does not seem to exist in appsv1alpha1.
-	// cmd.Flags().StringVar(&options.InferencePlatform, "inference-platform", util.InferencePlatform, "Inference platform to use for this service. Valid values are 'standalone' (default) and 'kserve'") // implement
+	cmd.Flags().Int32Var(&options.ScaleMinReplicas, "scale-min-replicas", util.ScaleMinReplicas, "Minimum number of replicas for the NIMService's HorizontalPodAutoscaler.")
+	cmd.Flags().StringVar(&options.InferencePlatform, "inference-platform", util.InferencePlatform, "Inference platform to use for this service. Valid values are 'standalone' (default) and 'kserve.'")
 
 	// add CPU/Memory resource limits?
 
@@ -186,7 +185,7 @@ func FillOutNIMServiceSpec(options *NIMServiceOptions) (*appsv1alpha1.NIMService
 	case string(corev1.ReadWriteOnce), string(corev1.ReadOnlyMany), string(corev1.ReadWriteMany), string(corev1.ReadWriteOncePod):
 		nimservice.Spec.Storage.PVC.VolumeAccessMode = corev1.PersistentVolumeAccessMode(options.PVCVolumeAccessMode)
 	default:
-		return nil, fmt.Errorf("invalid pvc-volume-access-mode: %q", options.ServiceType)
+		return nil, fmt.Errorf("invalid pvc-volume-access-mode: %q", options.PVCVolumeAccessMode)
 	}
 
 	if options.PVCStorageClass != "" {
@@ -196,11 +195,11 @@ func FillOutNIMServiceSpec(options *NIMServiceOptions) (*appsv1alpha1.NIMService
 	if options.PVCSize != "" {
 		nimservice.Spec.Storage.PVC.Size = options.PVCSize
 	}
-	
+
 	nimservice.Spec.AuthSecret = options.AuthSecret
 	nimservice.Spec.Image.PullSecrets = options.PullSecrets
 	nimservice.Spec.Image.PullPolicy = options.PullPolicy
-	nimservice.Spec.Expose.Service.Port = options.ServicePort
+	nimservice.Spec.Expose.Service.Port = ptr.To(options.ServicePort)
 
 	switch options.ServiceType {
 	case string(corev1.ServiceTypeClusterIP), string(corev1.ServiceTypeNodePort), string(corev1.ServiceTypeLoadBalancer):
@@ -232,16 +231,12 @@ func FillOutNIMServiceSpec(options *NIMServiceOptions) (*appsv1alpha1.NIMService
 		}
 	}
 
-	/*
-	if options.ServiceType != "standalone" {
-		if options.ServiceType == string(appsv1alpha1.PlatformTypeKServe) {
-			
-		}
+	switch options.InferencePlatform {
+	case string(appsv1alpha1.PlatformTypeKServe), string(appsv1alpha1.PlatformTypeStandalone):
+		nimservice.Spec.InferencePlatform = appsv1alpha1.PlatformType(options.InferencePlatform)
+	default:
+		return nil, fmt.Errorf("invalid inference-platform: %q, must be one of 'kserve,' 'standalone'", options.InferencePlatform)
 	}
-		*/
-
-
-	// fmt.Printf("DEBUG resources: %+v\n", nimservice.Spec.Resources)
 
 	return &nimservice, nil
 }

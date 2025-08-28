@@ -3,6 +3,7 @@ package deploy
 import (
 	"fmt"
 	"strings"
+	corev1 "k8s.io/api/core/v1"
 
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -100,8 +101,8 @@ If creating new PVC, minimum required flags are pvc-create, pvc-size, pvc-volume
 		Args: cobra.MaximumNArgs(1),
 		// TODO: Complete
 		Example: `	Deploying NIMCache with source as NGC with an existing PVC as storage.
-		kl nim deploy nimcache my-nimcache --nim-source=ngc --model-puller=nvcr.io/nim/meta/llama-3.1-8b-instruct:1.3.3 --pull-secret=ngc-secret --auth-secret=ngc-api-secret --engine=tensorrt_llm --tensorParallelism=1 --pvc-storage-name=nim-pvc
-	Deploying NIMCache with source as HuggingFace while creating new PVC.
+		kl nim deploy nimcache my-nimcache --nim-source=ngc --model-puller=nvcr.io/nim/meta/llama-3.1-8b-instruct:1.3.3 --pull-secret=ngc-secret --auth-secret=ngc-api-secret --engine=tensorrt_llm --tensor-parallelism=1 --pvc-storage-name=nim-pvc
+	Deploying NIMCache with source as HuggingFace while creating new PVC. Is similar in structure to deploying one with NeMo DataStore instead. 
 		kl nim deploy nimcache my-nimcache  --alt-endpoint=<hf-endpoint> --alt-namespace=main --auth-secret=<hf-secret> model-puller=<model-puller> --pull-secret=<hf-pullsecret> --pvc-create=true --pvc-size=20Gi --pvc-volume-access-mode=ReadWriteMany --pvc-storage-class=<storage-class-name>`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
@@ -154,15 +155,14 @@ If creating new PVC, minimum required flags are pvc-create, pvc-size, pvc-volume
 	cmd.Flags().StringVar(&options.PVCStorageClass, "pvc-storage-class", util.PVCStorageClass, "Storage class for PVC creation. Optional.")
 	cmd.Flags().StringVar(&options.AuthSecret, "auth-secret", util.AuthSecret, "Auth secret to use for accessing NGC/HF/NemoDataStore.")
 
-	// add CPU/Memory resource limits?
-
 	return cmd
 }
 
 // Ensure the source is defined. This is because there are common fields across all three sources, making it challenging to decide which one the user intends to set.
 func Validate(options *NIMCacheOptions) error {
-	if strings.ToLower(options.SourceConfiguration) != "ngc" || strings.ToLower(options.SourceConfiguration) != "huggingface" || strings.ToLower(options.SourceConfiguration) != "nemodatastore" {
-		return fmt.Errorf("--nim-source must be set to one of 'ngc', 'huggingface', 'nemodatastore'")
+	if strings.ToLower(options.SourceConfiguration) != "ngc" && strings.ToLower(options.SourceConfiguration) != "huggingface" && strings.ToLower(options.SourceConfiguration) != "nemodatastore" {
+		print(options.SourceConfiguration)
+		return fmt.Errorf("--nim-source must be set to one of 'ngc', 'huggingface', 'nemodatastore'. is %q", options.SourceConfiguration)
 	}
 	return nil
 }
@@ -198,11 +198,16 @@ func FillOutNIMCacheSpec(options *NIMCacheOptions) (*appsv1alpha1.NIMCache, erro
 	// Fill out Source
 	switch source {
 	case "ngc":
+		// Empty pointer, so initialize
+		nimcache.Spec.Source.NGC = &appsv1alpha1.NGCSource{}
 		nimcache.Spec.Source.NGC.AuthSecret = options.AuthSecret
 		nimcache.Spec.Source.NGC.ModelPuller = options.ModelPuller
 		nimcache.Spec.Source.NGC.PullSecret = options.PullSecret
-		// nimcache.Spec.Source.NGC.ModelEndpoint = options.ModelEndpoint if not empty
+		if options.ModelEndpoint != "" {
+			nimcache.Spec.Source.NGC.ModelEndpoint = ptr.To(options.ModelEndpoint)
+		}
 		// Model fields
+		nimcache.Spec.Source.NGC.Model = &appsv1alpha1.ModelSpec{}
 		if len(options.Profiles) > 0 {
 			nimcache.Spec.Source.NGC.Model.Profiles = options.Profiles
 		}
@@ -242,14 +247,22 @@ func FillOutNIMCacheSpec(options *NIMCacheOptions) (*appsv1alpha1.NIMCache, erro
 			}
 			nimcache.Spec.Source.NGC.Model.Buildable = ptr.To(parsed)
 		}
+
+		if options.ModelEndpoint != "" {
+			nimcache.Spec.Source.NGC.ModelEndpoint = ptr.To(options.ModelEndpoint)
+		}
 	case "huggingface":
-		//nimcache.Spec.Source.HF.Endpoint = options.AltEndpoint
-		//nimcache.Spec.Source.Namespace = options.AltNamespace
+		nimcache.Spec.Source.HF = &appsv1alpha1.HuggingFaceHubSource{}
+		nimcache.Spec.Source.HF.Endpoint = options.AltEndpoint
+		nimcache.Spec.Source.HF.Namespace = options.AltNamespace
+		nimcache.Spec.Source.HF.Endpoint = options.AltEndpoint
 		fillOutDSHF(&nimcache, options)
 	default:
 		//NeMo DataStore
+		nimcache.Spec.Source.DataStore = &appsv1alpha1.NemoDataStoreSource{}
 		nimcache.Spec.Source.DataStore.Endpoint = options.AltEndpoint
-		// nimcache.Spec.Source.DataStore.Namespace = options.AltNamespace
+		nimcache.Spec.Source.DataStore.Namespace = options.AltNamespace
+		nimcache.Spec.Source.DataStore.Endpoint = options.AltEndpoint
 		fillOutDSHF(&nimcache, options)
 	}
 
@@ -269,25 +282,45 @@ func FillOutNIMCacheSpec(options *NIMCacheOptions) (*appsv1alpha1.NIMCache, erro
 		nimcache.Spec.Resources.Memory = parsedMem
 	}
 
+	if options.PVCStorageName != "" {
+		nimcache.Spec.Storage.PVC.Name = options.PVCStorageName
+	}
+	nimcache.Spec.Storage.PVC.Create = ptr.To(options.PVCCreate)
+
+	if *nimcache.Spec.Storage.PVC.Create {
+		switch options.PVCVolumeAccessMode {
+		case string(corev1.ReadWriteOnce), string(corev1.ReadOnlyMany), string(corev1.ReadWriteMany), string(corev1.ReadWriteOncePod):
+			nimcache.Spec.Storage.PVC.VolumeAccessMode = corev1.PersistentVolumeAccessMode(options.PVCVolumeAccessMode)
+		default:
+			return nil, fmt.Errorf("invalid pvc-volume-access-mode: %q", options.PVCVolumeAccessMode)
+		}
+	}
+
+	if options.PVCStorageClass != "" {
+		nimcache.Spec.Storage.PVC.StorageClass = options.PVCStorageClass
+	}
+
+	if options.PVCSize != "" {
+		nimcache.Spec.Storage.PVC.Size = options.PVCSize
+	}
+
 	return &nimcache, nil
 }
 
 func fillOutDSHF(nimcache *appsv1alpha1.NIMCache, options *NIMCacheOptions) {
 	if options.SourceConfiguration == "huggingface" {
-		/*
-			if options.ModelName != "" {
-				nimcache.Spec.Source.HF.ModelName = ptr.To(options.ModelName)
-			}
-			if options.DatasetName != "" {
-				nimcache.Spec.Source.HF.DatasetName = ptr.To(options.DatasetName)
-			}
-			nimcache.Spec.Source.HF.AuthSecret = options.AuthSecret
-			nimcache.Spec.Source.HF.ModelPuller = options.ModelPuller
-			nimcache.Spec.Source.HF.PullSecret = options.PullSecret
-			if options.Revision != "" {
-				nimcache.Spec.Source.HF.Revision = ptr.To(options.Revision)
-			}
-		*/
+		if options.ModelName != "" {
+			nimcache.Spec.Source.HF.ModelName = ptr.To(options.ModelName)
+		}
+		if options.DatasetName != "" {
+			nimcache.Spec.Source.HF.DatasetName = ptr.To(options.DatasetName)
+		}
+		nimcache.Spec.Source.HF.AuthSecret = options.AuthSecret
+		nimcache.Spec.Source.HF.ModelPuller = options.ModelPuller
+		nimcache.Spec.Source.HF.PullSecret = options.PullSecret
+		if options.Revision != "" {
+			nimcache.Spec.Source.HF.Revision = ptr.To(options.Revision)
+		}
 	} else {
 		// NeMo DataStore
 		if options.ModelName != "" {
@@ -299,10 +332,8 @@ func fillOutDSHF(nimcache *appsv1alpha1.NIMCache, options *NIMCacheOptions) {
 		nimcache.Spec.Source.DataStore.AuthSecret = options.AuthSecret
 		nimcache.Spec.Source.DataStore.ModelPuller = options.ModelPuller
 		nimcache.Spec.Source.DataStore.PullSecret = options.PullSecret
-		/*
-			if options.Revision != "" {
-				nimcache.Spec.Source.DataStore.Revision = ptr.To(options.Revision)
-			}
-		*/
+		if options.Revision != "" {
+			nimcache.Spec.Source.DataStore.Revision = ptr.To(options.Revision)
+		}
 	}
 }

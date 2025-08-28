@@ -5,6 +5,7 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"reflect"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -97,9 +98,10 @@ func getExpose(nimService *appsv1alpha1.NIMService) string {
 		name = nimService.Spec.Expose.Service.Name
 	)
 
-	// Port is an int32 value, not *int32
-	if nimService.Spec.Expose.Service.Port != 0 {
-		port = fmt.Sprint(nimService.Spec.Expose.Service.Port)
+	if  nimService.Spec.Expose.Service.Port != nil {
+		if *nimService.Spec.Expose.Service.Port != 0 {
+			port = fmt.Sprint(*nimService.Spec.Expose.Service.Port)
+		}
 	}
 
 	switch {
@@ -133,7 +135,7 @@ func getStorage(nimService *appsv1alpha1.NIMService) string {
 	}
 
 	// If PVC is defined.
-	if (nimService.Spec.Storage.PVC != appsv1alpha1.PersistentVolumeClaim{}) {
+	if !reflect.DeepEqual(nimService.Spec.Storage.PVC, appsv1alpha1.PersistentVolumeClaim{}) {
 		if nimService.Spec.Storage.PVC.Name != "" {
 			return fmt.Sprintf("PVC: %s, %s", nimService.Spec.Storage.PVC.Name, nimService.Spec.Storage.PVC.Size)
 		}
