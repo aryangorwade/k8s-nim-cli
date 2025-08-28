@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"strings"
 	"testing"
 
 	getcmd "k8s-nim-operator-cli/pkg/cmd/get"
@@ -56,5 +57,20 @@ func Test_Get_NIMService_Subcommand_Wiring(t *testing.T) {
 	}
 	if f := cmd.Flags().Lookup("all-namespaces"); f == nil {
 		t.Fatalf("expected all-namespaces flag")
+	}
+}
+
+func Test_GetCommand_Rejects_Invalid_Subcommands(t *testing.T) {
+	streams, _, _, _ := genericTestIOStreams()
+	cmd := getcmd.NewGetCommand(nil, streams)
+
+	out, _ := executeCommandAndCaptureStdout(cmd, []string{"bogus"})
+	if want := "unknown command(s) \"bogus\""; !strings.Contains(out, want) {
+		t.Fatalf("expected output to contain %q, got: %s", want, out)
+	}
+
+	out, _ = executeCommandAndCaptureStdout(cmd, []string{"foo", "bar"})
+	if want := "unknown command(s) \"foo bar\""; !strings.Contains(out, want) {
+		t.Fatalf("expected output to contain %q, got: %s", want, out)
 	}
 }
