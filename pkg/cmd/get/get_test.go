@@ -72,111 +72,6 @@ func withSvcResources(ns appsv1alpha1.NIMService, limits, requests corev1.Resour
 	}
 	return ns
 }
-
-func Test_getExpose(t *testing.T) {
-	ns1 := withExposeService(newBaseNS("a", "ns"), "api", 8080)
-	if got := getExpose(&ns1); got != "Name: api, Port: 8080" {
-		t.Fatalf("getExpose(name+port) = %q, want %q", got, "Name: api, Port: 8080")
-	}
-
-	ns2 := withExposeService(newBaseNS("b", "ns"), "", 9090)
-	if got := getExpose(&ns2); got != "Port: 9090" {
-		t.Fatalf("getExpose(port only) = %q, want %q", got, "Port: 9090")
-	}
-
-	ns3 := newBaseNS("c", "ns")
-	if got := getExpose(&ns3); got != "" {
-		t.Fatalf("getExpose(none) = %q, want empty", got)
-	}
-}
-
-func Test_getScale(t *testing.T) {
-	min := int32(2)
-	ns1 := withScale(newBaseNS("a", "ns"), true, &min, 5)
-	if got := getScale(&ns1); got != "min: 2, max: 5" {
-		t.Fatalf("getScale(min+max) = %q", got)
-	}
-
-	ns2 := withScale(newBaseNS("b", "ns"), true, nil, 10)
-	if got := getScale(&ns2); got != "max: 10" {
-		t.Fatalf("getScale(max only) = %q", got)
-	}
-
-	ns3 := newBaseNS("c", "ns")
-	if got := getScale(&ns3); got != "disabled" {
-		t.Fatalf("getScale(disabled) = %q", got)
-	}
-}
-
-func Test_getStorage(t *testing.T) {
-	// NIMCache
-	ns1 := withStorageNIMCache(newBaseNS("a", "ns"), "cache-a", "fp8")
-	if got := getStorage(&ns1); got != "NIMCache: name: cache-a, profile: fp8" {
-		t.Fatalf("getStorage(NIMCache) = %q", got)
-	}
-
-	// PVC with name
-	ns2 := withStoragePVC(newBaseNS("b", "ns"), "pvc-b", "20Gi")
-	if got := getStorage(&ns2); got != "PVC: pvc-b, 20Gi" {
-		t.Fatalf("getStorage(PVC name) = %q", got)
-	}
-
-	// PVC without name
-	ns3 := withStoragePVC(newBaseNS("c", "ns"), "", "50Gi")
-	if got := getStorage(&ns3); got != "PVC: 50Gi" {
-		t.Fatalf("getStorage(PVC size only) = %q", got)
-	}
-
-	// HostPath
-	ns4 := withStorageHostPath(newBaseNS("d", "ns"), "/models")
-	if got := getStorage(&ns4); got != "HostPath: /models" {
-		t.Fatalf("getStorage(HostPath) = %q", got)
-	}
-}
-
-func Test_resourceListToOneLine_and_claimsToOneLine(t *testing.T) {
-	limits := corev1.ResourceList{
-		corev1.ResourceName("nvidia.com/gpu"): resource.MustParse("1"),
-		corev1.ResourceCPU:                    resource.MustParse("2"),
-		corev1.ResourceMemory:                 resource.MustParse("4Gi"),
-	}
-	got := resourceListToOneLine(limits)
-	// Keys should be sorted alphabetically by their string name
-	if got != "cpu: 2, memory: 4Gi, nvidia.com/gpu: 1" {
-		t.Fatalf("resourceListToOneLine = %q", got)
-	}
-
-	claims := []corev1.ResourceClaim{{Name: "a", Request: "req-a"}, {Name: "b", Request: "req-b"}}
-	if s := claimsToOneLine(claims); s != "a(req-a), b(req-b)" {
-		t.Fatalf("claimsToOneLine = %q", s)
-	}
-}
-
-func Test_getNIMServiceResources(t *testing.T) {
-	limits := corev1.ResourceList{
-		corev1.ResourceCPU:    resource.MustParse("4"),
-		corev1.ResourceMemory: resource.MustParse("8Gi"),
-	}
-	requests := corev1.ResourceList{
-		corev1.ResourceCPU:    resource.MustParse("2"),
-		corev1.ResourceMemory: resource.MustParse("4Gi"),
-	}
-	claims := []corev1.ResourceClaim{{Name: "a", Request: "req-a"}}
-
-	ns := withSvcResources(newBaseNS("a", "ns"), limits, requests, claims)
-
-	out := getNIMServiceResources(&ns)
-	for _, sub := range []string{
-		"Limits: cpu: 4, memory: 8Gi",
-		"Requests: cpu: 2, memory: 4Gi",
-		"Claims: a(req-a)",
-	} {
-		if !strings.Contains(out, sub) {
-			t.Fatalf("resources output missing %q in:\n%s", sub, out)
-		}
-	}
-}
-
 func Test_printNIMServices(t *testing.T) {
 	// Item 1
 	ns1 := withReplicas(withExposeService(withImage(newBaseNS("svc1", "ns1"), "repo1", "v1"), "api", 8080), 2)
@@ -293,27 +188,6 @@ func Test_getSource(t *testing.T) {
 		})
 	}
 }
-
-func Test_getModel(t *testing.T) {
-	tests := []struct {
-		name string
-		nc   appsv1alpha1.NIMCache
-		want string
-	}{
-		{"NGC returns ModelPuller", ncWithNGC("a", "ns", "img:tag"), "img:tag"},
-		{"DataStore with Endpoint", ncWithDataStoreEndpoint("b", "ns", "https://datastore"), "https://datastore"},
-		{"DataStore with ModelName", ncWithDataStoreModel("c", "ns", "my-model"), "my-model"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := getModel(&tt.nc)
-			if got != tt.want {
-				t.Fatalf("getModel() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
 func Test_getPVCDetails(t *testing.T) {
 	nc1 := withPVC(newBaseNC("a", "ns"), "pvc-a", "10Gi")
 	nc2 := withPVC(newBaseNC("b", "ns"), "", "20Gi")

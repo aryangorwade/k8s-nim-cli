@@ -27,12 +27,12 @@ func Test_DeployCommand_Rejects_Invalid_Subcommands(t *testing.T) {
 	cmd := deploycmd.NewDeployCommand(nil, streams)
 
 	out, _ := executeCommandAndCaptureStdout(cmd, []string{"bogus"})
-	if want := "unknown command(s) \"bogus\""; !strings.Contains(out, want) {
+	if want := " Error: unknown command(s) \"bogus\""; !strings.Contains(out, want) {
 		t.Fatalf("expected output to contain %q, got: %s", want, out)
 	}
 
 	out, _ = executeCommandAndCaptureStdout(cmd, []string{"foo", "bar"})
-	if want := "unknown command(s) \"foo bar\""; !strings.Contains(out, want) {
+	if want := " Error: unknown command(s) \"foo bar\""; !strings.Contains(out, want) {
 		t.Fatalf("expected output to contain %q, got: %s", want, out)
 	}
 }

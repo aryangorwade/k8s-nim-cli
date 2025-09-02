@@ -10,10 +10,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	"k8s-nim-operator-cli/pkg/cmd/delete"
-	"k8s-nim-operator-cli/pkg/cmd/deploy"
+	"k8s-nim-operator-cli/pkg/cmd/create"
 	"k8s-nim-operator-cli/pkg/cmd/get"
 	"k8s-nim-operator-cli/pkg/cmd/log"
 	"k8s-nim-operator-cli/pkg/cmd/status"
+	"k8s-nim-operator-cli/pkg/cmd/deploy"
 )
 
 func init() {
@@ -50,6 +51,7 @@ func NewNIMCommand(streams genericiooptions.IOStreams) *cobra.Command {
 	cmd.AddCommand(status.NewStatusCommand(cmdFactory, streams))
 	cmd.AddCommand(log.NewLogCommand(cmdFactory, streams))
 	cmd.AddCommand(delete.NewDeleteCommand(cmdFactory, streams))
+	cmd.AddCommand(create.NewCreateCommand(cmdFactory, streams))
 	cmd.AddCommand(deploy.NewDeployCommand(cmdFactory, streams))
 
 	return cmd

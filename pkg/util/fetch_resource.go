@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
+	corev1 "k8s.io/api/core/v1"
 	"github.com/spf13/cobra"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
@@ -16,6 +18,8 @@ import (
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 
 	appsv1alpha1 "github.com/NVIDIA/k8s-nim-operator/api/apps/v1alpha1"
+
+	"bufio"
 )
 
 type FetchResourceOptions struct {
@@ -181,4 +185,75 @@ func MessageCondition(obj interface{}) (*v1.Condition, error) {
 	default:
 		return nil, fmt.Errorf("unsupported type %T (want *NIMCache or *NIMService)", obj)
 	}
+}
+
+// StreamResourceEvents lists pods by label selector and prints logs related to those pods.
+func StreamResourceLogs(ctx context.Context, options *FetchResourceOptions, k8sClient client.Client, namespace string, resourceName string, labelSelector string) error {
+	kube := k8sClient.KubernetesClient()
+	pods, err := kube.CoreV1().Pods(namespace).List(ctx, v1.ListOptions{LabelSelector: labelSelector})
+	if err != nil {
+		return fmt.Errorf("failed to list pods: %w", err)
+	}
+	if len(pods.Items) == 0 {
+		return fmt.Errorf("no pods found for %s/%s (selector=%q)", namespace, resourceName, labelSelector)
+	}
+
+	type logLine struct {
+		pod, container string
+		text           string
+	}
+	lines := make(chan logLine, 1024)
+
+	// Flags (replace with real flags)
+	follow := true
+	allContainers := true
+	targetContainer := ""
+	timestamps := false
+
+	var wg sync.WaitGroup
+	for _, pod := range pods.Items {
+		containers := pod.Spec.Containers
+		if !allContainers && targetContainer != "" {
+			containers = []corev1.Container{{Name: targetContainer}}
+		}
+		for _, c := range containers {
+			wg.Add(1)
+			podName, containerName := pod.Name, c.Name
+			go func() {
+				defer wg.Done()
+				req := kube.CoreV1().Pods(namespace).GetLogs(podName, &corev1.PodLogOptions{
+					Container:  containerName,
+					Follow:     follow,
+					Timestamps: timestamps,
+				})
+				rc, err := req.Stream(ctx)
+				if err != nil {
+					fmt.Fprintf(options.IoStreams.ErrOut, "error streaming %s/%s[%s]: %v\n", namespace, podName, containerName, err)
+					return
+				}
+				defer rc.Close()
+
+				sc := bufio.NewScanner(rc)
+				for sc.Scan() {
+					select {
+					case <-ctx.Done():
+						return
+					case lines <- logLine{pod: podName, container: containerName, text: sc.Text()}:
+					}
+				}
+			}()
+		}
+	}
+
+	// Close channel when all streams end
+	go func() {
+		wg.Wait()
+		close(lines)
+	}()
+
+	// Printer: interleaves lines as they arrive
+	for ln := range lines {
+		fmt.Fprintf(options.IoStreams.Out, "[%s/%s] %s\n", ln.pod, ln.container, ln.text)
+	}
+	return nil
 }

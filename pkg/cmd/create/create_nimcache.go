@@ -1,4 +1,4 @@
-package deploy
+package create
 
 import (
 	"fmt"
@@ -82,19 +82,14 @@ func (options *NIMCacheOptions) CompleteNamespace(args []string, cmd *cobra.Comm
 	return nil
 }
 
-func NewDeployNIMCacheCommand(cmdFactory cmdutil.Factory, streams genericclioptions.IOStreams) *cobra.Command {
+func NewCreateNIMCacheCommand(cmdFactory cmdutil.Factory, streams genericclioptions.IOStreams) *cobra.Command {
 	options := NewNIMCacheOptions(cmdFactory, streams)
 
 	cmd := &cobra.Command{
 		Use: "nimcache [NAME]",
-		Short: `Deploy new NIMCache with specified information.
-
-Minimum required flags are --nim-source (and those required for that specific nim-source) and storage: reference an existing/create new PVC.
-  For --nim-source=ngc, minimum required flags are model-puller, auth-secret.
-  For --nim-source=huggingface/nemodatastore, minumum required flags are alt-endpoint, alt-namespace, auth-secret, model-puller, pull-secret.
-
-  If using existing PVC, minimum required flags are pvc-storage-name.
-  If creating new PVC, minimum required flags are pvc-create, pvc-size, pvc-volume-access-mode, pvc-storage-class.`,
+		Short: "Create new NIMCache with specified information",
+		Long: `Create new NIMCache with specified parameters.
+Must specify --nim-source and storage: reference an existing/create new PVC.`,
 		SilenceUsage: true,
 		// ValidArgsFunction: completion.RayClusterCompletionFunc(cmdFactory),
 		Args: cobra.MaximumNArgs(1),
@@ -115,20 +110,15 @@ Minimum required flags are --nim-source (and those required for that specific ni
 					return fmt.Errorf("failed to create client: %w", err)
 				}
 				options.ResourceType = util.NIMCache
-				return RunDeployNIMCache(cmd.Context(), options, k8sClient)
+				return RunCreateNIMCache(cmd.Context(), options, k8sClient)
 			}
 		},
 	}
 
 	cmd.Example = strings.Join([]string{
-		"  Deploying NIMService with existing PVC as storage.",
-		"    kl nim deploy nimservice llama3-nimservice --image-repository=nvcr.io/nim/meta/llama-3.1-8b-instruct --tag=1.3.3 --pvc-storage-name=nim-pvc",
+		"  kl nim create nimcache my-nimcache --nim-source=ngc --model-puller=nvcr.io/nim/meta/llama-3.1-8b-instruct:1.3.3 --pull-secret=ngc-secret --auth-secret=ngc-api-secret --engine=tensorrt_llm --tensorParallelism=1 --pvc-storage-name=nim-pvc",
 		"",
-		"  Deploying NIMService without existing PVC as storage.",
-		"    kl nim deploy nimservice llama3-nimservice --image-repository=nvcr.io/nim/meta/llama-3.1-8b-instruct --tag=1.3.3 --pvc-create=true --pvc-size=20Gi --pvc-volume-access-mode=ReadWriteMany --pvc-storage-class=<storage-class-name>",
-		"",
-		"  Deploying NIMService with existing NIMCache as storage.",
-		"    kl nim deploy nimservice llama3-nimservice --image-repository=nvcr.io/nim/meta/llama-3.1-8b-instruct --tag=1.3.3 --nimcache-storage-name=<nimcache-name>",
+		"  kl nim create nimcache my-nimcache  --alt-endpoint=<hf-endpoint> --alt-namespace=main --auth-secret=<hf-secret> model-puller=<model-puller> --pull-secret=<hf-pullsecret> --pvc-create=true --pvc-size=20Gi --pvc-volume-access-mode=ReadWriteMany --pvc-storage-class=<storage-class-name>",
 	  }, "\n")
 
 	// The first argument will be name. Other arguments will be specified as flags.
@@ -172,8 +162,8 @@ func Validate(options *NIMCacheOptions) error {
 	return nil
 }
 
-// Will need different Run commands for NewDeployNIMCacheCommand and nimservice command.
-func RunDeployNIMCache(ctx context.Context, options *NIMCacheOptions, k8sClient client.Client) error {
+// Will need different Run commands for NewCreateNIMCacheCommand and nimservice command.
+func RunCreateNIMCache(ctx context.Context, options *NIMCacheOptions, k8sClient client.Client) error {
 
 	// Fill out NIMCache Spec.
 	nimcache, err := FillOutNIMCacheSpec(options)

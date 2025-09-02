@@ -1,5 +1,6 @@
-package deploy
+package create
 
+// TODO: delete the old methods for streaming pod logs in fetch_resource.go and in  log.go.
 // TODO: implement autocompletion
 // TODO: remove unnecessayr packages like raycluster from go.sum/mod
 
@@ -13,10 +14,10 @@ import (
 	cmdutil "k8s.io/kubectl/pkg/cmd/util"
 )
 
-func NewDeployCommand(cmdFactory cmdutil.Factory, streams genericclioptions.IOStreams) *cobra.Command {
+func NewCreateCommand(cmdFactory cmdutil.Factory, streams genericclioptions.IOStreams) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:          "deploy",
-		Short:        "Deploy a NIM Operator custom resource with preset values from a list.",
+		Use:          "create",
+		Short:        "Create a NIM Operator custom resource",
 		Long:         `Creates the specified NIM Operator resource with the parameters specified through flags.`,
 		SilenceUsage: true,
 		Run: func(cmd *cobra.Command, args []string) {
@@ -27,7 +28,7 @@ func NewDeployCommand(cmdFactory cmdutil.Factory, streams genericclioptions.IOSt
 		},
 	}
 
-	//cmd.AddCommand(NewCreateNIMCacheCommand(cmdFactory, streams))
-	//cmd.AddCommand(NewCreateNIMServiceCommand(cmdFactory, streams))
+	cmd.AddCommand(NewCreateNIMCacheCommand(cmdFactory, streams))
+	cmd.AddCommand(NewCreateNIMServiceCommand(cmdFactory, streams))
 	return cmd
 }

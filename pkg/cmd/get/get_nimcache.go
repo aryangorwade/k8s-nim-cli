@@ -53,13 +53,9 @@ func printNIMCaches(nimCacheList *appsv1alpha1.NIMCacheList, output io.Writer) e
 	resTable := &v1.Table{
 		ColumnDefinitions: []v1.TableColumnDefinition{
 			{Name: "Name", Type: "string"},
-			{Name: "Namespace", Type: "string"},
 			{Name: "Source", Type: "string"},
-			{Name: "Model/ModelPuller", Type: "string"},
-			{Name: "CPU", Type: "string"},
-			{Name: "Memory", Type: "string"},
-			{Name: "PVC Volume", Type: "string"},
-			{Name: "State", Type: "string"},
+			{Name: "Status", Type: "string"},
+			{Name: "PVC", Type: "string"},
 			{Name: "Age", Type: "string"},
 		},
 	}
@@ -73,13 +69,9 @@ func printNIMCaches(nimCacheList *appsv1alpha1.NIMCacheList, output io.Writer) e
 		resTable.Rows = append(resTable.Rows, v1.TableRow{
 			Cells: []interface{}{
 				nimcache.GetName(),
-				nimcache.GetNamespace(),
 				getSource(&nimcache),
-				getModel(&nimcache),
-				nimcache.Spec.Resources.CPU.String(),
-				nimcache.Spec.Resources.Memory.String(),
-				getPVCDetails(&nimcache),
 				nimcache.Status.State,
+				getPVCDetails(&nimcache),
 				age,
 			},
 		})
@@ -96,24 +88,6 @@ func getSource(nimCache *appsv1alpha1.NIMCache) string {
 		return "NVIDIA NeMo DataStore"
 	}
 	return "HuggingFace Hub"
-}
-
-// Return either ModelPuller or ModelName/Endpoint.
-// nimCache.Spec.Source.HF undefined (type "github.com/NVIDIA/k8s-nim-operator/api/apps/v1alpha1".NIMSource has no field or method HF).
-func getModel(nimCache *appsv1alpha1.NIMCache) string {
-	if nimCache.Spec.Source.NGC != nil {
-		return nimCache.Spec.Source.NGC.ModelPuller
-	} else if nimCache.Spec.Source.HF != nil {
-		if nimCache.Spec.Source.HF.ModelName == nil {
-			return nimCache.Spec.Source.HF.Endpoint
-		}
-		return *nimCache.Spec.Source.HF.ModelName
-	} else {
-		if nimCache.Spec.Source.DataStore.ModelName == nil {
-			return nimCache.Spec.Source.DataStore.Endpoint
-		}
-		return *nimCache.Spec.Source.DataStore.ModelName
-	}
 }
 
 func getPVCDetails(nimCache *appsv1alpha1.NIMCache) string {

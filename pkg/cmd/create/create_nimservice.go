@@ -1,4 +1,4 @@
-package deploy
+package create
 
 import (
 	"fmt"
@@ -72,12 +72,13 @@ func (options *NIMServiceOptions) CompleteNamespace(args []string, cmd *cobra.Co
 	return nil
 }
 
-func NewDeployNIMServiceCommand(cmdFactory cmdutil.Factory, streams genericclioptions.IOStreams) *cobra.Command {
+func NewCreateNIMServiceCommand(cmdFactory cmdutil.Factory, streams genericclioptions.IOStreams) *cobra.Command {
 	options := NewNIMServiceOptions(cmdFactory, streams)
 
 	cmd := &cobra.Command{
 		Use: "nimservice [NAME]",
-		Short: `Deploy new NIMService with specified information. 
+		Short: "Create new NIMService with specified information",
+		Long: `Create new NIMService with specified parameters. 
 
 Minimum required flags are --image-repository, --tag, and storage: reference either an existing NIMCache with --nimcache-storage-name, or reference an existing/create new PVC. 
 	- If using existing PVC, minimum required flags are pvc-storage-name. 
@@ -99,20 +100,20 @@ Minimum required flags are --image-repository, --tag, and storage: reference eit
 					return fmt.Errorf("failed to create client: %w", err)
 				}
 				options.ResourceType = util.NIMService
-				return RunDeployNIMService(cmd.Context(), options, k8sClient)
+				return RunCreateNIMService(cmd.Context(), options, k8sClient)
 			}
 		},
 	}
 
 	cmd.Example = strings.Join([]string{
-		"  Deploying NIMService with existing PVC as storage.",
-		"    kl nim deploy nimservice llama3-nimservice --image-repository=nvcr.io/nim/meta/llama-3.1-8b-instruct --tag=1.3.3 --pvc-storage-name=nim-pvc",
+		"  Creating NIMService with existing PVC as storage.",
+		"    kl nim create nimservice llama3-nimservice --image-repository=nvcr.io/nim/meta/llama-3.1-8b-instruct --tag=1.3.3 --pvc-storage-name=nim-pvc",
 		"",
-		"  Deploying NIMService without existing PVC as storage.",
-		"    kl nim deploy nimservice llama3-nimservice --image-repository=nvcr.io/nim/meta/llama-3.1-8b-instruct --tag=1.3.3 --pvc-create=true --pvc-size=20Gi --pvc-volume-access-mode=ReadWriteMany --pvc-storage-class=<storage-class-name>",
+		"  Creating NIMService without existing PVC as storage.",
+		"    kl nim create nimservice llama3-nimservice --image-repository=nvcr.io/nim/meta/llama-3.1-8b-instruct --tag=1.3.3 --pvc-create=true --pvc-size=20Gi --pvc-volume-access-mode=ReadWriteMany --pvc-storage-class=<storage-class-name>",
 		"",
-		"  Deploying NIMService with existing NIMCache as storage.",
-		"    kl nim deploy nimservice llama3-nimservice --image-repository=nvcr.io/nim/meta/llama-3.1-8b-instruct --tag=1.3.3 --nimcache-storage-name=<nimcache-name>",
+		"  Creating NIMService with existing NIMCache as storage.",
+		"    kl nim create nimservice llama3-nimservice --image-repository=nvcr.io/nim/meta/llama-3.1-8b-instruct --tag=1.3.3 --nimcache-storage-name=<nimcache-name>",
 	  }, "\n")
 
 	// The first argument will be name. Other arguments will be specified as flags.
@@ -141,8 +142,8 @@ Minimum required flags are --image-repository, --tag, and storage: reference eit
 	return cmd
 }
 
-// Will need different Run commands for NewDeployNIMCacheCommand and nimservice command.
-func RunDeployNIMService(ctx context.Context, options *NIMServiceOptions, k8sClient client.Client) error {
+// Will need different Run commands for NewCreateNIMCacheCommand and nimservice command.
+func RunCreateNIMService(ctx context.Context, options *NIMServiceOptions, k8sClient client.Client) error {
 
 	// Fill out NIMService Spec.
 	nimservice, err := FillOutNIMServiceSpec(options)
